@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const rooms = new Map();
+const roomSubscribers = new Map();
 
 const CHIP_VALUES = { bronze: 1, silver: 2, gold: 5 };
 const START_CHIPS = { bronze: 15, silver: 10, gold: 5 };
@@ -71,6 +72,30 @@ function remainingRequirement(req, paid) {
     gold: Math.max(0, req.gold - paid.gold)
   };
 }
+function multiplyRequirement(req, factor = 1) {
+  return {
+    bronze: req.bronze * factor,
+    silver: req.silver * factor,
+    gold: req.gold * factor
+  };
+}
+function emptyPenaltyMap(players) {
+  return Object.fromEntries(players.map(p => [p.id, Object.fromEntries(Object.keys(POT_DEFS).map(potId => [potId, false]))]));
+}
+function makeAnteRequirements(players, penaltyMap = {}) {
+  const requirements = {};
+  for (const p of players) {
+    requirements[p.id] = {};
+    for (const [potId, def] of Object.entries(POT_DEFS)) {
+      const factor = penaltyMap?.[p.id]?.[potId] ? 2 : 1;
+      requirements[p.id][potId] = multiplyRequirement(def.required, factor);
+    }
+  }
+  return requirements;
+}
+function personalRequirement(room, playerId, potId) {
+  return room.anteRequirements?.[playerId]?.[potId] || POT_DEFS[potId].required;
+}
 function sortHand(hand) {
   const order = { green: 0, red: 1, flame: 2, pokeball: 3 };
   hand.sort((a,b) => a.rank - b.rank || order[a.suit] - order[b.suit]);
@@ -106,7 +131,9 @@ function createRoom(hostName) {
     players: [{ id, name: hostName, chips: cloneChips(START_CHIPS) }],
     pots: Object.fromEntries(Object.keys(POT_DEFS).map(potId => [potId, { chips: emptyChips() }])),
     antePaid: {},
+    anteRequirements: {},
     anteConfirmed: {},
+    nextAntePenalties: {},
     hands: {},
     leftovers: [],
     activePlayerIndex: 0,
@@ -142,7 +169,7 @@ function requireTurn(room, playerId) {
   return active;
 }
 function playerAnteComplete(room, playerId) {
-  return Object.entries(POT_DEFS).every(([potId, def]) => requirementsMet(def.required, room.antePaid[playerId][potId]));
+  return Object.keys(POT_DEFS).every(potId => requirementsMet(personalRequirement(room, playerId, potId), room.antePaid[playerId][potId]));
 }
 function totalPot(room) {
   return Object.values(room.pots).reduce((sum, pot) => sum + chipValue(pot.chips), 0);
@@ -228,16 +255,31 @@ function endRound(room, winnerId) {
     summary.push({ name: p.name, cards: owed, paid });
     addLog(room, `${p.name} hat ${owed} Karten übrig und zahlt Wert ${paid} an ${winner.name}.`, paid === owed ? 'special' : 'bad');
   }
+  const nextPenalties = emptyPenaltyMap(room.players);
+  const penaltySummary = [];
+  for (const p of room.players) {
+    const hand = room.hands[p.id] || [];
+    for (const [potId, def] of Object.entries(POT_DEFS)) {
+      if (hand.some(card => card.suit === def.suit && card.rank === def.rank)) {
+        nextPenalties[p.id][potId] = true;
+        penaltySummary.push({ playerId: p.id, name: p.name, potId, label: def.label, normal: cloneChips(def.required), next: multiplyRequirement(def.required, 2) });
+        addLog(room, `⚠️ ${p.name} hat ${def.label} am Rundenende noch auf der Hand und zahlt dafür nächste Runde doppelt.`, 'bad');
+      }
+    }
+  }
+  room.nextAntePenalties = nextPenalties;
   room.phase = 'roundEnd';
   room.winnerId = winnerId;
-  room.roundSummary = { winnerName: winner.name, totalReceived, payments: summary };
+  room.roundSummary = { winnerName: winner.name, totalReceived, payments: summary, penalties: penaltySummary };
   addLog(room, `🏆 ${winner.name} gewinnt Runde ${room.round}.`, 'special');
 }
 function startNextRound(room) {
   room.round += 1;
   room.phase = 'ante';
   room.antePaid = makeAntePaid(room.players);
+  room.anteRequirements = makeAnteRequirements(room.players, room.nextAntePenalties);
   room.anteConfirmed = Object.fromEntries(room.players.map(p => [p.id, false]));
+  room.nextAntePenalties = emptyPenaltyMap(room.players);
   room.hands = {};
   room.leftovers = [];
   room.currentRow = Array(13).fill(null);
@@ -274,6 +316,7 @@ function publicState(room, playerId) {
     pots: room.pots,
     potDefs: POT_DEFS,
     antePaid: room.antePaid[playerId] || null,
+    anteRequirements: room.anteRequirements?.[playerId] || null,
     anteConfirmed: !!room.anteConfirmed[playerId],
     allAnteConfirmed: room.phase !== 'ante' ? false : room.players.every(p => room.anteConfirmed[p.id]),
     currentRow: room.currentRow,
@@ -291,6 +334,65 @@ function publicState(room, playerId) {
     winnerId: room.winnerId,
     roundSummary: room.roundSummary
   };
+}
+
+
+function addSubscriber(room, playerId, res) {
+  if (!roomSubscribers.has(room.code)) roomSubscribers.set(room.code, new Map());
+  const byPlayer = roomSubscribers.get(room.code);
+  if (!byPlayer.has(playerId)) byPlayer.set(playerId, new Set());
+  byPlayer.get(playerId).add(res);
+}
+function removeSubscriber(roomCode, playerId, res) {
+  const byPlayer = roomSubscribers.get(roomCode);
+  if (!byPlayer) return;
+  const set = byPlayer.get(playerId);
+  if (set) {
+    set.delete(res);
+    if (!set.size) byPlayer.delete(playerId);
+  }
+  if (!byPlayer.size) roomSubscribers.delete(roomCode);
+}
+function sendEvent(res, payload) {
+  if (res.writableEnded || res.destroyed) return false;
+  try {
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function broadcastRoom(room) {
+  const byPlayer = roomSubscribers.get(room.code);
+  if (!byPlayer) return;
+  for (const [playerId, listeners] of byPlayer.entries()) {
+    let payload;
+    try { payload = { state: publicState(room, playerId) }; }
+    catch { continue; }
+    for (const res of [...listeners]) {
+      if (!sendEvent(res, payload)) removeSubscriber(room.code, playerId, res);
+    }
+  }
+}
+function openEventStream(req, res, room, playerId) {
+  requirePlayer(room, playerId);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write('retry: 1500\n\n');
+  addSubscriber(room, playerId, res);
+  sendEvent(res, { state: publicState(room, playerId) });
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded || res.destroyed) return clearInterval(heartbeat);
+    try { res.write(': ping\n\n'); } catch { clearInterval(heartbeat); }
+  }, 20000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    removeSubscriber(room.code, playerId, res);
+  });
 }
 
 function cleanName(input) {
@@ -340,8 +442,18 @@ async function handleApi(req, res, url) {
       if (room.players.some(p => p.name.toLocaleLowerCase('de') === name.toLocaleLowerCase('de'))) return fail(res, 409, 'Dieser Spielername ist im Raum bereits vergeben.');
       const playerId = randomId();
       room.players.push({ id: playerId, name, chips: cloneChips(START_CHIPS) });
+      if (room.nextAntePenalties) room.nextAntePenalties[playerId] = Object.fromEntries(Object.keys(POT_DEFS).map(potId => [potId, false]));
       addLog(room, `${name} ist dem Raum beigetreten.`, 'good');
+      broadcastRoom(room);
       return ok(res, { roomCode: code, playerId, state: publicState(room, playerId) });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/events') {
+      const code = cleanCode(url.searchParams.get('room'));
+      const playerId = String(url.searchParams.get('playerId') || '');
+      const room = rooms.get(code);
+      if (!room) return fail(res, 404, 'Raum nicht gefunden oder abgelaufen.');
+      return openEventStream(req, res, room, playerId);
     }
 
     if (req.method === 'GET' && url.pathname === '/api/state') {
@@ -368,7 +480,9 @@ async function handleApi(req, res, url) {
         if (room.players.length < 3 || room.players.length > 4) throw new Error('Es werden 3 oder 4 Spieler benötigt.');
         room.phase = 'ante';
         room.antePaid = makeAntePaid(room.players);
+        room.anteRequirements = makeAnteRequirements(room.players);
         room.anteConfirmed = Object.fromEntries(room.players.map(p => [p.id, false]));
+        room.nextAntePenalties = emptyPenaltyMap(room.players);
         addLog(room, 'Das Spiel startet. Alle zahlen jetzt ihre Pflichtchips ein.', 'special');
       } else if (action === 'deposit') {
         if (room.phase !== 'ante') throw new Error('Aktuell ist keine Einsatzphase.');
@@ -378,8 +492,9 @@ async function handleApi(req, res, url) {
         const def = POT_DEFS[potId];
         if (!def || !CHIP_VALUES[chipType]) throw new Error('Ungültiger Pot oder Chip.');
         const paid = room.antePaid[playerId][potId];
-        if (!def.required[chipType]) throw new Error(`${def.label} verlangt keinen ${chipType}-Chip.`);
-        if (paid[chipType] >= def.required[chipType]) throw new Error(`${def.label} ist mit diesem Chip-Typ bereits bezahlt.`);
+        const required = personalRequirement(room, playerId, potId);
+        if (!required[chipType]) throw new Error(`${def.label} verlangt keinen ${chipType}-Chip.`);
+        if (paid[chipType] >= required[chipType]) throw new Error(`${def.label} ist mit diesem Chip-Typ bereits bezahlt.`);
         if (player.chips[chipType] <= 0) throw new Error('Diesen Chip besitzt du nicht mehr.');
         player.chips[chipType] -= 1;
         room.pots[potId].chips[chipType] += 1;
@@ -390,8 +505,9 @@ async function handleApi(req, res, url) {
         if (room.anteConfirmed[playerId]) throw new Error('Du hast deinen Einsatz bereits bestätigt.');
         const remaining = {};
         let requiredValue = 0;
-        for (const [potId, def] of Object.entries(POT_DEFS)) {
-          remaining[potId] = remainingRequirement(def.required, room.antePaid[playerId][potId]);
+        for (const potId of Object.keys(POT_DEFS)) {
+          const required = personalRequirement(room, playerId, potId);
+          remaining[potId] = remainingRequirement(required, room.antePaid[playerId][potId]);
           requiredValue += chipValue(remaining[potId]);
         }
         if (chipValue(player.chips) < requiredValue) throw new Error('Du hast nicht genug Chip-Wert für den Pflicht-Einsatz.');
@@ -475,10 +591,12 @@ async function handleApi(req, res, url) {
           room.rowOrder = [];
           room.rowDirection = null;
           room.newRowMode = true;
-          room.activePlayerIndex = room.players.findIndex(p => p.id === room.lastPlayedBy);
+          const lastIndex = room.players.findIndex(p => p.id === room.lastPlayedBy);
+          room.activePlayerIndex = (lastIndex + 1) % room.players.length;
           room.consecutiveSkips = 0;
           const opener = room.players[room.activePlayerIndex];
-          addLog(room, `Niemand konnte weiterlegen. ${opener.name} hat zuletzt gelegt und eröffnet eine neue Reihe.`, 'special');
+          const lastPlayer = room.players[lastIndex];
+          addLog(room, `Niemand konnte die Reihe fortsetzen. Nach ${lastPlayer.name} eröffnet jetzt der nachfolgende Spieler ${opener.name} eine neue Reihe.`, 'special');
         } else {
           advanceTurn(room);
         }
@@ -489,6 +607,7 @@ async function handleApi(req, res, url) {
       } else {
         throw new Error('Unbekannte Aktion.');
       }
+      broadcastRoom(room);
       return ok(res, { state: publicState(room, playerId) });
     }
 
@@ -516,7 +635,7 @@ function serveStatic(req, res, url) {
       '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
       '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml'
     };
-    res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600' });
+    res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream', 'Cache-Control': ['.html','.js','.css'].includes(ext) ? 'no-cache, no-store, must-revalidate' : 'public, max-age=86400' });
     fs.createReadStream(filePath).pipe(res);
   });
 }
@@ -535,7 +654,14 @@ const server = http.createServer(async (req, res) => {
 
 setInterval(() => {
   const cutoff = Date.now() - 12 * 60 * 60 * 1000;
-  for (const [code, room] of rooms) if (room.updatedAt < cutoff) rooms.delete(code);
+  for (const [code, room] of rooms) {
+    if (room.updatedAt < cutoff) {
+      rooms.delete(code);
+      const byPlayer = roomSubscribers.get(code);
+      if (byPlayer) for (const listeners of byPlayer.values()) for (const res of listeners) { try { res.end(); } catch {} }
+      roomSubscribers.delete(code);
+    }
+  }
 }, 30 * 60 * 1000).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
