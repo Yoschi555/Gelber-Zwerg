@@ -111,6 +111,8 @@ function createRoom(hostName) {
     leftovers: [],
     activePlayerIndex: 0,
     currentRow: Array(13).fill(null),
+    rowOrder: [],
+    rowDirection: null,
     rowHistory: [],
     newRowMode: true,
     lastPlayedBy: null,
@@ -145,19 +147,27 @@ function playerAnteComplete(room, playerId) {
 function totalPot(room) {
   return Object.values(room.pots).reduce((sum, pot) => sum + chipValue(pot.chips), 0);
 }
+function wrapRank(value) {
+  return ((value - 1 + 13) % 13) + 1;
+}
 function legalRanks(room) {
   if (room.newRowMode) return RANKS.map(r => r.value);
-  const filled = room.currentRow.map((c,i) => c ? i + 1 : null).filter(Boolean);
-  if (!filled.length) return RANKS.map(r => r.value);
-  const low = Math.min(...filled), high = Math.max(...filled);
-  const legal = [];
-  if (low > 1) legal.push(low - 1);
-  if (high < 13) legal.push(high + 1);
-  return legal;
+  if (!room.rowOrder || room.rowOrder.length === 0) return RANKS.map(r => r.value);
+
+  const lastRank = room.rowOrder[room.rowOrder.length - 1].rank;
+  if (room.rowOrder.length === 1 || room.rowDirection === null) {
+    // Nach der Startkarte sind beide direkten Nachbarn erlaubt – inklusive K ↔ A.
+    return [wrapRank(lastRank - 1), wrapRank(lastRank + 1)];
+  }
+
+  // Ab der zweiten Karte ist die Richtung fest und läuft zyklisch weiter.
+  return [wrapRank(lastRank + room.rowDirection)];
 }
 function isPlayable(room, card) { return room.newRowMode || legalRanks(room).includes(card.rank); }
 function archiveRow(room, reason) {
-  if (room.currentRow.some(Boolean)) room.rowHistory.push({ cards: [...room.currentRow], reason });
+  if (room.rowOrder?.length) {
+    room.rowHistory.push({ cards: [...room.rowOrder], direction: room.rowDirection, reason });
+  }
 }
 function advanceTurn(room) { room.activePlayerIndex = (room.activePlayerIndex + 1) % room.players.length; }
 function payoutSpecial(room, card, player) {
@@ -194,6 +204,8 @@ function dealRound(room) {
   room.leftovers = deck.slice(cursor);
   room.activePlayerIndex = Math.floor(Math.random() * room.players.length);
   room.currentRow = Array(13).fill(null);
+  room.rowOrder = [];
+  room.rowDirection = null;
   room.rowHistory = [];
   room.newRowMode = true;
   room.lastPlayedBy = null;
@@ -229,6 +241,8 @@ function startNextRound(room) {
   room.hands = {};
   room.leftovers = [];
   room.currentRow = Array(13).fill(null);
+  room.rowOrder = [];
+  room.rowDirection = null;
   room.rowHistory = [];
   room.newRowMode = true;
   room.lastPlayedBy = null;
@@ -263,6 +277,8 @@ function publicState(room, playerId) {
     anteConfirmed: !!room.anteConfirmed[playerId],
     allAnteConfirmed: room.phase !== 'ante' ? false : room.players.every(p => room.anteConfirmed[p.id]),
     currentRow: room.currentRow,
+    rowOrder: room.rowOrder || [],
+    rowDirection: room.rowDirection,
     leftoverCount: room.leftovers.length,
     activePlayerId: active?.id || null,
     activePlayerName: active?.name || null,
@@ -412,26 +428,40 @@ async function handleApi(req, res, url) {
         hand.splice(index, 1);
         if (room.newRowMode) {
           room.currentRow = Array(13).fill(null);
+          room.rowOrder = [];
+          room.rowDirection = null;
           room.currentRow[card.rank - 1] = card;
+          room.rowOrder.push(card);
           room.newRowMode = false;
           addLog(room, `${player.name} startet eine neue Reihe mit ${cardName(card)}.`, 'good');
         } else {
+          const previousRank = room.rowOrder[room.rowOrder.length - 1].rank;
+          if (room.rowOrder.length === 1) {
+            room.rowDirection = card.rank === wrapRank(previousRank + 1) ? 1 : -1;
+            addLog(room, `${player.name} legt ${cardName(card)} – Richtung ${room.rowDirection === 1 ? 'aufwärts' : 'abwärts'} ist festgelegt.`, 'good');
+          } else {
+            addLog(room, `${player.name} legt ${cardName(card)}.`, 'good');
+          }
           room.currentRow[card.rank - 1] = card;
-          addLog(room, `${player.name} legt ${cardName(card)}.`, 'good');
+          room.rowOrder.push(card);
         }
         room.lastPlayedBy = playerId;
         room.consecutiveSkips = 0;
         payoutSpecial(room, card, player);
         if (hand.length === 0) {
           endRound(room, playerId);
-        } else if (room.currentRow.every(Boolean)) {
-          archiveRow(room, 'vollständig A–K');
+        } else if (room.rowOrder.length === 13) {
+          archiveRow(room, 'vollständiger 13er-Zyklus');
           room.currentRow = Array(13).fill(null);
+          room.rowOrder = [];
+          room.rowDirection = null;
           room.newRowMode = true;
           room.activePlayerIndex = room.players.findIndex(p => p.id === playerId);
-          addLog(room, `A bis K vollständig! ${player.name} eröffnet sofort eine neue Reihe.`, 'special');
+          addLog(room, `Alle 13 Ränge sind vollständig! ${player.name} eröffnet sofort eine neue Reihe.`, 'special');
         } else {
-          advanceTurn(room);
+          // Erfolgreiches Legen beendet den Zug NICHT mehr. Der Spieler darf so lange
+          // weitere passende Karten legen, bis er freiwillig skippt oder nicht mehr kann.
+          room.activePlayerIndex = room.players.findIndex(p => p.id === playerId);
         }
       } else if (action === 'skip') {
         if (room.phase !== 'playing') throw new Error('Die Runde läuft gerade nicht.');
@@ -442,6 +472,8 @@ async function handleApi(req, res, url) {
         if (room.consecutiveSkips >= room.players.length && room.lastPlayedBy) {
           archiveRow(room, 'unterbrochen nach kompletter Skip-Runde');
           room.currentRow = Array(13).fill(null);
+          room.rowOrder = [];
+          room.rowDirection = null;
           room.newRowMode = true;
           room.activePlayerIndex = room.players.findIndex(p => p.id === room.lastPlayedBy);
           room.consecutiveSkips = 0;
