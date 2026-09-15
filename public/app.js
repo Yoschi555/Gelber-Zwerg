@@ -161,7 +161,7 @@
       renderAnte();
     } else if (gameState.phase === 'playing') {
       els.statusActive.textContent = gameState.activePlayerName || '—';
-      els.statusRow.textContent = gameState.newRowMode ? 'Neue Reihe' : `Erlaubt: ${legalRankText()}`;
+      els.statusRow.textContent = gameState.newRowMode ? 'Neue Reihe' : `${directionText()} · Nächster Rang: ${legalRankText()}`;
       els.antePanel.classList.add('hidden');
       els.turnPanel.classList.remove('hidden');
       els.playSection.classList.remove('hidden');
@@ -249,10 +249,10 @@
 
   function renderPlay() {
     const myTurn = gameState.activePlayerId === gameState.self.id && gameState.phase === 'playing';
-    const prompt = gameState.newRowMode ? 'Eine beliebige Karte eröffnet die neue Reihe.' : `Erlaubte Ränge: ${legalRankText()}.`;
+    const prompt = gameState.newRowMode ? 'Eine beliebige Karte eröffnet die neue Reihe.' : `Du bleibst am Zug. Nächster Rang: ${legalRankText()}.`;
     els.turnText.textContent = myTurn ? prompt : `Warte auf ${gameState.activePlayerName || 'den aktiven Spieler'} …`;
     els.skipBtn.disabled = !myTurn || gameState.newRowMode;
-    els.rowHint.textContent = gameState.newRowMode ? `${gameState.activePlayerName} darf eine beliebige Karte ausspielen.` : `Anlegen: ${legalRankText()} · Symbol egal.`;
+    els.rowHint.textContent = gameState.newRowMode ? `${gameState.activePlayerName} darf eine beliebige Karte ausspielen.` : `${directionText()} · Anlegen: ${legalRankText()} · Symbol egal · erfolgreiche Karte = derselbe Spieler bleibt am Zug.`;
     els.leftoverCount.textContent = gameState.leftoverCount;
     els.skipCount.textContent = gameState.consecutiveSkips;
     els.rankTrack.innerHTML = Array.from({length:13},(_,i)=>{
@@ -268,9 +268,14 @@
     }).join('');
   }
   function legalRankText(){ return (gameState.legalRanks || []).map(r=>RANK_LABELS[r]).join(' oder ') || 'keine'; }
+  function directionText(){
+    if (gameState.newRowMode) return 'Neue Reihe';
+    if (gameState.rowDirection === 1) return 'Richtung ↑ zyklisch';
+    if (gameState.rowDirection === -1) return 'Richtung ↓ zyklisch';
+    return 'Richtung noch offen';
+  }
   function edgeRank(rank){
-    const filled=gameState.currentRow.map((c,i)=>c?i+1:null).filter(Boolean); if(!filled.length)return false;
-    return rank===Math.min(...filled)||rank===Math.max(...filled);
+    return !gameState.newRowMode && (gameState.legalRanks || []).includes(rank);
   }
 
   function renderLog() {
