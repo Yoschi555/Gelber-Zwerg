@@ -14,6 +14,7 @@
   let session = loadSession();
   let gameState = null;
   let pollTimer = null;
+  let eventSource = null;
   let selectedChip = null;
   let toastTimer = null;
   let busy = false;
@@ -111,9 +112,33 @@
   }
   function startPolling() {
     stopPolling();
-    pollTimer = setInterval(() => refreshState(), 900);
+    startRealtime();
+    // Fallback, falls EventSource im Browser/Netz kurz aussetzt.
+    pollTimer = setInterval(() => refreshState(), 5000);
   }
-  function stopPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+  function startRealtime() {
+    if (!session || typeof EventSource === 'undefined') return;
+    const url = `/api/events?room=${encodeURIComponent(session.roomCode)}&playerId=${encodeURIComponent(session.playerId)}`;
+    eventSource = new EventSource(url);
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data?.state) {
+          gameState = data.state;
+          routeByState();
+        }
+      } catch {}
+    };
+    eventSource.onerror = () => {
+      // EventSource verbindet sich automatisch erneut; zusätzlich hilft der 5s-Fallback-Poll.
+    };
+  }
+  function stopPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+    if (eventSource) eventSource.close();
+    eventSource = null;
+  }
 
   function routeByState() {
     if (!gameState) return;
@@ -202,20 +227,23 @@
       zone.classList.remove('selected-target');
       if (gameState.phase==='ante' && selectedChip && !gameState.anteConfirmed) {
         const paid = gameState.antePaid?.[potId] || {bronze:0,silver:0,gold:0};
-        if (def.required[selectedChip] > paid[selectedChip]) zone.classList.add('selected-target');
+        const required = gameState.anteRequirements?.[potId] || def.required;
+        if (required[selectedChip] > paid[selectedChip]) zone.classList.add('selected-target');
       }
     });
 
     els.potLegend.innerHTML = Object.entries(gameState.potDefs).map(([potId,def]) => {
       const pot = gameState.pots[potId].chips;
       let status = '<span>Auszahlung beim Ausspielen</span>';
+      const required = gameState.anteRequirements?.[potId] || def.required;
+      const doubled = chipValue(required) > chipValue(def.required);
       if (gameState.phase==='ante') {
         const paid = gameState.antePaid?.[potId] || {bronze:0,silver:0,gold:0};
-        status = requirementsMet(def.required, paid)
+        status = requirementsMet(required, paid)
           ? '<span class="req-ok">✓ von dir bezahlt</span>'
-          : `<span class="req-missing">Offen: ${reqText(remaining(def.required, paid))}</span>`;
+          : `<span class="req-missing">Offen: ${reqText(remaining(required, paid))}</span>`;
       }
-      return `<div class="pot-legend-item"><strong>${def.label}</strong>${status}<span>Pflicht: ${reqText(def.required)} · Potwert ${chipValue(pot)}</span></div>`;
+      return `<div class="pot-legend-item"><strong>${def.label}</strong>${status}<span>Pflicht: ${reqText(required)}${doubled ? ' · ⚠ doppelt' : ''} · Potwert ${chipValue(pot)}</span></div>`;
     }).join('');
   }
 
@@ -232,7 +260,12 @@
   function renderAnte() {
     const self = gameState.self;
     els.potHint.textContent = gameState.anteConfirmed ? 'Dein Einsatz ist bestätigt. Warte auf die anderen.' : 'Ziehe Chips auf die passenden Pot-Felder oder zahle automatisch ein.';
-    els.anteStateText.textContent = gameState.anteConfirmed ? 'Einsatz bestätigt – du bist bereit.' : 'Pflicht pro Runde: Gesamtwert 15.';
+    const reqs = gameState.anteRequirements || Object.fromEntries(Object.entries(gameState.potDefs).map(([id,def]) => [id,def.required]));
+    const personalTotal = Object.values(reqs).reduce((sum, req) => sum + chipValue(req), 0);
+    const hasPenalty = Object.entries(gameState.potDefs).some(([potId,def]) => chipValue(reqs[potId] || def.required) > chipValue(def.required));
+    els.anteStateText.textContent = gameState.anteConfirmed
+      ? 'Einsatz bestätigt – du bist bereit.'
+      : `Dein Pflicht-Einsatz: Gesamtwert ${personalTotal}${hasPenalty ? ' · Doppel-Einsatz wegen nicht ausgespielter Pot-Karte' : ''}.`;
     els.chipInventory.innerHTML = ['bronze','silver','gold'].map(type => `
       <div class="chip-pack">
         <div class="chip ${type} ${selectedChip===type?'selected':''}" data-chip="${type}" draggable="${!gameState.anteConfirmed && self.chips[type]>0}">${CHIP_VALUES[type]}</div>
@@ -244,7 +277,7 @@
   }
   function myAnteComplete(){
     if(!gameState.antePaid) return false;
-    return Object.entries(gameState.potDefs).every(([potId,def])=>requirementsMet(def.required,gameState.antePaid[potId]));
+    return Object.entries(gameState.potDefs).every(([potId,def])=>requirementsMet(gameState.anteRequirements?.[potId] || def.required,gameState.antePaid[potId]));
   }
 
   function renderPlay() {
@@ -286,10 +319,12 @@
     if (gameState.phase !== 'roundEnd' || !gameState.roundSummary) return;
     const s = gameState.roundSummary;
     els.roundTitle.textContent = `${s.winnerName} gewinnt Runde ${gameState.round}!`;
+    const penalties = s.penalties || [];
     els.roundSummary.innerHTML = `<div class="summary-row"><strong>Gewinner</strong><span>${escapeHtml(s.winnerName)}</span></div>
       <div class="summary-row"><strong>Erhaltener Restkarten-Wert</strong><span>${s.totalReceived}</span></div>
       ${s.payments.map(p=>`<div class="summary-row"><span>${escapeHtml(p.name)} · ${p.cards} Restkarten</span><strong>−${p.paid}</strong></div>`).join('')}
-      <div class="subtle">Nicht geleerte Pots bleiben für die nächste Runde liegen.</div>`;
+      ${penalties.length ? `<div class="subtle"><strong>⚠ Doppel-Einsatz nächste Runde:</strong></div>${penalties.map(p=>`<div class="summary-row"><span>${escapeHtml(p.name)} · ${escapeHtml(p.label)} nicht ausgespielt</span><strong>${reqText(p.next)}</strong></div>`).join('')}` : ''}
+      <div class="subtle">Nicht geleerte Pots bleiben für die nächste Runde liegen. Wer eine Pot-Karte auf der Hand behält, zahlt für dieses Feld in der nächsten Runde doppelt.</div>`;
     els.nextRoundBtn.classList.toggle('hidden', !gameState.isHost);
     els.roundWaitText.classList.toggle('hidden', gameState.isHost);
     if (!els.roundDialog.open) els.roundDialog.showModal();
@@ -361,6 +396,8 @@
       zone.addEventListener('click',()=>{ if(gameState?.phase==='ante'&&selectedChip&&!gameState.anteConfirmed) action('deposit',{potId:zone.dataset.pot,chipType:selectedChip}); });
     });
     els.handCards.addEventListener('click',e=>{ const card=e.target.closest('[data-card-id]'); if(card&&!card.disabled)action('play',{cardId:card.dataset.cardId}); });
+    window.addEventListener('focus', () => refreshState());
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshState(); });
   }
 
   async function bootstrap() {
