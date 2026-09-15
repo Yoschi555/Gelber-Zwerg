@@ -1,0 +1,12 @@
+{
+  "name": "gelber-zwerg-online",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Online-Multiplayer-Prototyp für Gelber Zwerg",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

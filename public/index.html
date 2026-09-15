@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#15110b" />
+  <title>Gelber Zwerg Online</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <section id="entryScreen" class="screen active entry-screen">
+      <div class="entry-card">
+        <div class="brand-kicker">YI Kartenwelt</div>
+        <h1>Gelber Zwerg</h1>
+        <p class="lead">Online-Multiplayer für 3–4 Spieler. Jeder öffnet die Seite auf seinem eigenen Gerät, gibt seinen Namen ein und tritt demselben Raum bei.</p>
+
+        <label class="field-label" for="playerName">Dein Spielername</label>
+        <input id="playerName" class="text-input" maxlength="18" placeholder="z. B. Lukas" autocomplete="nickname" />
+
+        <div class="entry-actions">
+          <button id="createRoomBtn" class="btn primary big">Neues Spiel erstellen</button>
+          <div class="or-line"><span>oder</span></div>
+          <div class="join-row">
+            <input id="roomCodeInput" class="text-input room-code-input" maxlength="5" placeholder="RAUMCODE" autocomplete="off" />
+            <button id="joinRoomBtn" class="btn secondary big">Beitreten</button>
+          </div>
+        </div>
+        <div id="entryError" class="message error hidden"></div>
+        <div class="entry-note">Der Host startet, sobald 3 oder 4 Spieler im Raum sind.</div>
+      </div>
+    </section>
+
+    <section id="lobbyScreen" class="screen lobby-screen">
+      <header class="topbar">
+        <div>
+          <div class="brand-kicker">Online-Lobby</div>
+          <h2>Gelber Zwerg</h2>
+        </div>
+        <button id="leaveLobbyBtn" class="btn ghost">Verlassen</button>
+      </header>
+
+      <main class="lobby-wrap">
+        <section class="room-card panel">
+          <div class="room-code-block">
+            <span>Raumcode</span>
+            <strong id="roomCodeLabel">-----</strong>
+            <button id="copyRoomBtn" class="btn secondary">Einladungslink kopieren</button>
+          </div>
+          <p class="subtle">Jeder Mitspieler öffnet dieselbe Website, trägt einen eigenen Namen ein und gibt diesen Code ein.</p>
+        </section>
+
+        <section class="panel lobby-players-card">
+          <div class="section-head">
+            <div>
+              <div class="panel-title">Spieler im Raum</div>
+              <div id="lobbyCountText" class="subtle">1/4</div>
+            </div>
+            <div id="hostBadge" class="host-badge hidden">Du bist Host</div>
+          </div>
+          <div id="lobbyPlayers" class="lobby-players"></div>
+          <button id="startGameBtn" class="btn primary big full" disabled>Spiel starten</button>
+          <div id="lobbyWaitText" class="subtle centered">Warte auf weitere Spieler …</div>
+        </section>
+      </main>
+    </section>
+
+    <section id="gameScreen" class="screen game-screen">
+      <header class="topbar game-topbar">
+        <div>
+          <div class="brand-kicker">Raum <span id="gameRoomCode">-----</span> · Runde <span id="roundLabel">1</span></div>
+          <h2 id="phaseTitle">Einsatzphase</h2>
+        </div>
+        <div class="topbar-actions">
+          <button id="copyGameLinkBtn" class="btn ghost">Link</button>
+          <button id="rulesBtn" class="btn ghost">Regeln</button>
+          <button id="leaveGameBtn" class="btn danger ghost">Verlassen</button>
+        </div>
+      </header>
+
+      <main class="game-shell">
+        <section id="playersStrip" class="players-strip"></section>
+
+        <section class="status-grid">
+          <div class="status-card"><span>Phase</span><strong id="statusPhase">—</strong></div>
+          <div class="status-card"><span>Aktiv</span><strong id="statusActive">—</strong></div>
+          <div class="status-card"><span>Reihe</span><strong id="statusRow">—</strong></div>
+          <div class="status-card accent"><span>Pot gesamt</span><strong id="statusPot">0</strong></div>
+        </section>
+
+        <section class="table-layout">
+          <div class="panel pot-panel">
+            <div class="section-head">
+              <div>
+                <div class="panel-title">Pot-Felder</div>
+                <div id="potHint" class="subtle">Ziehe Chips auf die passenden Felder.</div>
+              </div>
+              <div class="pot-total">Wert <strong id="potTotal">0</strong></div>
+            </div>
+
+            <div class="pot-board">
+              <img src="assets/ui/pot-board.webp" alt="Gelber-Zwerg-Pot-Feld" />
+              <button class="pot-zone pot-green-k" data-pot="greenK"></button>
+              <button class="pot-zone pot-flame-d" data-pot="flameD"></button>
+              <button class="pot-zone pot-red10" data-pot="red10"></button>
+              <button class="pot-zone pot-pokeball-b" data-pot="pokeballB"></button>
+              <button class="pot-zone pot-red7" data-pot="red7"></button>
+            </div>
+            <div id="potLegend" class="pot-legend"></div>
+          </div>
+
+          <aside class="side-stack">
+            <section id="antePanel" class="panel side-panel">
+              <div class="panel-title">Dein Chip-Inventar</div>
+              <div id="anteStateText" class="subtle">Zahle deine Pflichtchips ein.</div>
+              <div id="chipInventory" class="chip-inventory"></div>
+              <button id="autoAnteBtn" class="btn secondary full">Automatisch einzahlen</button>
+              <button id="confirmAnteBtn" class="btn primary full" disabled>Einsatz bestätigen</button>
+            </section>
+
+            <section id="turnPanel" class="panel side-panel hidden">
+              <div class="panel-title">Dein Zug</div>
+              <div id="turnText" class="turn-callout">—</div>
+              <button id="skipBtn" class="btn secondary full">Skip</button>
+            </section>
+
+            <section class="panel side-panel">
+              <div class="panel-title">Spielverlauf</div>
+              <div id="gameLog" class="game-log"></div>
+            </section>
+          </aside>
+        </section>
+
+        <section id="playSection" class="play-section hidden">
+          <div class="panel row-panel">
+            <div class="section-head">
+              <div>
+                <div class="panel-title">Aktuelle Reihe</div>
+                <div id="rowHint" class="subtle">—</div>
+              </div>
+              <div class="small-stats"><span>Übrig <strong id="leftoverCount">0</strong></span><span>Skips <strong id="skipCount">0</strong></span></div>
+            </div>
+            <div id="rankTrack" class="rank-track"></div>
+          </div>
+
+          <div class="panel hand-panel">
+            <div class="section-head">
+              <div>
+                <div class="panel-title">Deine Hand</div>
+                <div id="handHint" class="subtle">—</div>
+              </div>
+              <div class="hand-count">Karten <strong id="myHandCount">0</strong></div>
+            </div>
+            <div id="handCards" class="hand-cards"></div>
+          </div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <dialog id="rulesDialog" class="dialog-card">
+    <div class="dialog-head">
+      <h3>Regeln</h3>
+      <button id="closeRulesBtn" class="btn ghost">Schließen</button>
+    </div>
+    <div class="rules-copy">
+      <p>3–4 Spieler. Jeder startet mit 15 Bronze-, 10 Silber- und 5 Gold-Chips.</p>
+      <p>Pflichteinsatz pro Runde: Rot 10 = 1 Bronze, Pokéball Bube = 1 Silber, Flammen Dame = 3 Bronze, Grün König = 2 Silber, Rot 7 = 1 Gold.</p>
+      <p>Bei 4 Spielern erhält jeder 12 Karten, 4 bleiben übrig. Bei 3 Spielern erhält jeder 15 Karten, 7 bleiben übrig.</p>
+      <p>Eine Reihe startet mit einer beliebigen Karte. Danach darf nur der direkt benachbarte Rang gelegt werden, unabhängig vom Symbol. Vollständig ist die Reihe erst von Ass bis König.</p>
+      <p>Skippt eine komplette Tischrunde, startet der Spieler, der zuletzt erfolgreich gelegt hat, eine neue Reihe. Wird Ass bis König komplett, darf der aktuelle Spieler direkt neu eröffnen.</p>
+      <p>Wer eine der fünf Pot-Karten spielt, erhält sofort den ganzen zugehörigen Pot. Wer zuerst keine Handkarten mehr hat, gewinnt die Runde; die anderen zahlen entsprechend ihrer Restkartenanzahl.</p>
+    </div>
+  </dialog>
+
+  <dialog id="roundDialog" class="dialog-card">
+    <div class="dialog-head"><h3 id="roundTitle">Runde beendet</h3></div>
+    <div id="roundSummary" class="round-summary"></div>
+    <button id="nextRoundBtn" class="btn primary full hidden">Nächste Runde starten</button>
+    <div id="roundWaitText" class="subtle centered hidden">Warte auf den Host …</div>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
