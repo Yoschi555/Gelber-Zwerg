@@ -6,9 +6,9 @@
     'entryScreen','lobbyScreen','gameScreen','playerName','roomCodeInput','createRoomBtn','joinRoomBtn','entryError',
     'roomCodeLabel','copyRoomBtn','lobbyPlayers','lobbyCountText','hostBadge','startGameBtn','lobbyWaitText','leaveLobbyBtn',
     'gameRoomCode','roundLabel','phaseTitle','copyGameLinkBtn','rulesBtn','leaveGameBtn','playersStrip','statusPhase','statusActive','statusRow','statusPot',
-    'potHint','potTotal','potLegend','antePanel','anteStateText','chipInventory','autoAnteBtn','confirmAnteBtn','turnPanel','turnText','skipBtn','gameLog',
+    'potHint','potTotal','potLegend','antePanel','anteStateText','chipInventory','autoAnteBtn','confirmAnteBtn','turnPanel','turnText','skipBtn',
     'playSection','rowHint','leftoverCount','skipCount','rankTrack','handHint','myHandCount','handCards','rulesDialog','closeRulesBtn','roundDialog','roundTitle',
-    'roundSummary','nextRoundBtn','roundWaitText','toast'
+    'roundSummary','nextRoundBtn','gameOverLeaveBtn','roundWaitText','toast'
   ].map(id => [id, document.getElementById(id)]));
 
   let session = loadSession();
@@ -142,31 +142,34 @@
 
   function routeByState() {
     if (!gameState) return;
+    if (!['roundEnd','gameOver'].includes(gameState.phase) && els.roundDialog.open) {
+      els.roundDialog.close();
+    }
     if (gameState.phase === 'lobby') { showScreen('lobby'); renderLobby(); }
     else { showScreen('game'); renderGame(); }
   }
 
   function renderLobby() {
     els.roomCodeLabel.textContent = gameState.code;
-    els.lobbyCountText.textContent = `${gameState.players.length}/4 Spieler`;
+    els.lobbyCountText.textContent = `${gameState.players.length}/6 Spieler`;
     els.hostBadge.classList.toggle('hidden', !gameState.isHost);
-    els.lobbyPlayers.innerHTML = [...Array(4)].map((_,i) => {
+    els.lobbyPlayers.innerHTML = [...Array(6)].map((_,i) => {
       const p = gameState.players[i];
       if (!p) return `<div class="lobby-player empty"><div class="avatar">${i+1}</div><div><strong>Freier Platz</strong><span>Warte auf Mitspieler</span></div></div>`;
       return `<div class="lobby-player"><div class="avatar">${escapeHtml(initials(p.name))}</div><div><strong>${escapeHtml(p.name)}</strong><span>${p.isHost ? 'Host' : 'Spieler'}${p.id===gameState.self.id ? ' · Du' : ''}</span></div></div>`;
     }).join('');
-    const enough = gameState.players.length >= 3 && gameState.players.length <= 4;
+    const enough = gameState.players.length >= 3 && gameState.players.length <= 6;
     els.startGameBtn.classList.toggle('hidden', !gameState.isHost);
     els.startGameBtn.disabled = !enough;
     els.lobbyWaitText.textContent = gameState.isHost
-      ? (enough ? 'Alle bereit? Dann kannst du starten.' : 'Mindestens 3 Spieler werden benötigt.')
+      ? (enough ? 'Alle bereit? Dann kannst du starten.' : 'Mindestens 3 Spieler werden benötigt; maximal 6 können mitspielen.')
       : 'Warte darauf, dass der Host das Spiel startet …';
   }
 
   function renderGame() {
     els.gameRoomCode.textContent = gameState.code;
     els.roundLabel.textContent = gameState.round;
-    const phaseTitle = gameState.phase === 'ante' ? 'Einsatzphase' : gameState.phase === 'playing' ? 'Spielrunde' : 'Runde beendet';
+    const phaseTitle = gameState.phase === 'ante' ? 'Einsatzphase' : gameState.phase === 'playing' ? 'Spielrunde' : gameState.phase === 'gameOver' ? 'Partie beendet' : 'Runde beendet';
     els.phaseTitle.textContent = phaseTitle;
     els.statusPhase.textContent = phaseTitle;
     els.statusPot.textContent = gameState.totalPotValue;
@@ -174,12 +177,12 @@
 
     renderPlayers();
     renderPots();
-    renderLog();
 
     if (gameState.phase === 'ante') {
-      els.statusActive.textContent = gameState.anteConfirmed ? 'Einsatz bestätigt' : gameState.self.name;
-      const confirmed = gameState.players.filter(p => p.anteConfirmed).length;
-      els.statusRow.textContent = `${confirmed}/${gameState.players.length} bereit`;
+      els.statusActive.textContent = gameState.self.eliminated ? 'Ausgeschieden' : (gameState.anteConfirmed ? 'Einsatz bestätigt' : gameState.self.name);
+      const active = gameState.players.filter(p => !p.eliminated);
+      const confirmed = active.filter(p => p.anteConfirmed).length;
+      els.statusRow.textContent = `${confirmed}/${active.length} aktive Spieler bereit`;
       els.antePanel.classList.remove('hidden');
       els.turnPanel.classList.add('hidden');
       els.playSection.classList.add('hidden');
@@ -188,10 +191,10 @@
       els.statusActive.textContent = gameState.activePlayerName || '—';
       els.statusRow.textContent = gameState.newRowMode ? 'Neue Reihe' : `${directionText()} · Nächster Rang: ${legalRankText()}`;
       els.antePanel.classList.add('hidden');
-      els.turnPanel.classList.remove('hidden');
+      els.turnPanel.classList.toggle('hidden', !!gameState.self.eliminated);
       els.playSection.classList.remove('hidden');
       renderPlay();
-    } else {
+    } else if (gameState.phase === 'roundEnd') {
       els.statusActive.textContent = gameState.roundSummary?.winnerName || '—';
       els.statusRow.textContent = 'Runde abgeschlossen';
       els.antePanel.classList.add('hidden');
@@ -199,17 +202,24 @@
       els.playSection.classList.remove('hidden');
       renderPlay();
       showRoundDialog();
+    } else if (gameState.phase === 'gameOver') {
+      els.statusActive.textContent = gameState.gameSummary?.winnerName || (gameState.gameSummary?.tied ? 'Unentschieden' : '—');
+      els.statusRow.textContent = 'Partie beendet';
+      els.antePanel.classList.add('hidden');
+      els.turnPanel.classList.add('hidden');
+      els.playSection.classList.add('hidden');
+      showGameOverDialog();
     }
   }
 
   function renderPlayers() {
     els.playersStrip.innerHTML = gameState.players.map(p => {
-      const tag = p.id === gameState.self.id ? 'Du' : p.isHost ? 'Host' : p.isActive ? 'Am Zug' : '';
-      return `<div class="player-card ${p.isActive && gameState.phase==='playing' ? 'active' : ''}">
+      const tag = p.eliminated ? 'Raus' : p.id === gameState.self.id ? 'Du' : p.isHost ? 'Host' : p.isActive ? 'Am Zug' : '';
+      return `<div class="player-card ${p.isActive && gameState.phase==='playing' ? 'active' : ''} ${p.eliminated ? 'eliminated' : ''}">
         <div class="avatar">${escapeHtml(initials(p.name))}</div>
         <div>
           <div class="player-name-line"><span>${escapeHtml(p.name)}</span>${tag ? `<span class="tag">${tag}</span>` : ''}</div>
-          <div class="player-meta"><span>Hand <strong>${p.handCount}</strong></span><span>Chipwert <strong>${chipValue(p.chips)}</strong></span>${gameState.phase==='ante'?`<span>${p.anteConfirmed?'✓ bereit':'zahlt ein'}</span>`:''}</div>
+          <div class="player-meta"><span>Hand <strong>${p.handCount}</strong></span><span>Chipwert <strong>${chipValue(p.chips)}</strong></span>${gameState.phase==='ante'?`<span>${p.eliminated?'ausgeschieden':p.anteConfirmed?'✓ bereit':'zahlt ein'}</span>`:''}</div>
           <div class="mini-chips">${miniChip('bronze',p.chips.bronze)}${miniChip('silver',p.chips.silver)}${miniChip('gold',p.chips.gold)}</div>
         </div>
       </div>`;
@@ -239,9 +249,13 @@
       const doubled = chipValue(required) > chipValue(def.required);
       if (gameState.phase==='ante') {
         const paid = gameState.antePaid?.[potId] || {bronze:0,silver:0,gold:0};
-        status = requirementsMet(required, paid)
-          ? '<span class="req-ok">✓ von dir bezahlt</span>'
-          : `<span class="req-missing">Offen: ${reqText(remaining(required, paid))}</span>`;
+        if (gameState.anteResolution?.automatic) {
+          status = '<span class="req-ok">Zufällige Not-Einzahlung</span>';
+        } else {
+          status = requirementsMet(required, paid)
+            ? '<span class="req-ok">✓ von dir bezahlt</span>'
+            : `<span class="req-missing">Offen: ${reqText(remaining(required, paid))}</span>`;
+        }
       }
       return `<div class="pot-legend-item"><strong>${def.label}</strong>${status}<span>Pflicht: ${reqText(required)}${doubled ? ' · ⚠ doppelt' : ''} · Potwert ${chipValue(pot)}</span></div>`;
     }).join('');
@@ -259,10 +273,32 @@
 
   function renderAnte() {
     const self = gameState.self;
-    els.potHint.textContent = gameState.anteConfirmed ? 'Dein Einsatz ist bestätigt. Warte auf die anderen.' : 'Ziehe Chips auf die passenden Pot-Felder oder zahle automatisch ein.';
+    const resolution = gameState.anteResolution;
     const reqs = gameState.anteRequirements || Object.fromEntries(Object.entries(gameState.potDefs).map(([id,def]) => [id,def.required]));
     const personalTotal = Object.values(reqs).reduce((sum, req) => sum + chipValue(req), 0);
     const hasPenalty = Object.entries(gameState.potDefs).some(([potId,def]) => chipValue(reqs[potId] || def.required) > chipValue(def.required));
+
+    if (self.eliminated) {
+      els.potHint.textContent = 'Deine restlichen Chips wurden zufällig auf die Pots verteilt.';
+      els.anteStateText.textContent = `Du hattest vor der Einzahlung nur Chipwert ${resolution?.startingValue ?? 0}. Unter 7 scheidest du aus der Partie aus und kannst weiter zuschauen.`;
+      els.chipInventory.innerHTML = '<div class="subtle">Du erhältst keine Karten mehr.</div>';
+      els.autoAnteBtn.disabled = true;
+      els.confirmAnteBtn.disabled = true;
+      els.confirmAnteBtn.textContent = 'Ausgeschieden';
+      return;
+    }
+
+    if (resolution?.automatic) {
+      els.potHint.textContent = 'Dein kompletter Restbestand wurde automatisch zufällig auf die fünf Pots verteilt.';
+      els.anteStateText.textContent = `Du hattest Chipwert ${resolution.startingValue} und konntest deinen vollständigen Einsatz von ${resolution.requiredValue} nicht mehr zahlen. Da du mindestens 7 hattest, bleibst du in der Partie.`;
+      els.chipInventory.innerHTML = '<div class="subtle">Alle deine vorhandenen Chips wurden eingezahlt. Warte auf die übrigen Spieler.</div>';
+      els.autoAnteBtn.disabled = true;
+      els.confirmAnteBtn.disabled = true;
+      els.confirmAnteBtn.textContent = '✓ Automatisch eingezahlt';
+      return;
+    }
+
+    els.potHint.textContent = gameState.anteConfirmed ? 'Dein Einsatz ist bestätigt. Warte auf die anderen.' : 'Ziehe Chips auf die passenden Pot-Felder oder zahle automatisch ein.';
     els.anteStateText.textContent = gameState.anteConfirmed
       ? 'Einsatz bestätigt – du bist bereit.'
       : `Dein Pflicht-Einsatz: Gesamtwert ${personalTotal}${hasPenalty ? ' · Doppel-Einsatz wegen nicht ausgespielter Pot-Karte' : ''}.`;
@@ -281,7 +317,7 @@
   }
 
   function renderPlay() {
-    const myTurn = gameState.activePlayerId === gameState.self.id && gameState.phase === 'playing';
+    const myTurn = !gameState.self.eliminated && gameState.activePlayerId === gameState.self.id && gameState.phase === 'playing';
     const prompt = gameState.newRowMode ? 'Eine beliebige Karte eröffnet die neue Reihe.' : `Du bleibst am Zug. Nächster Rang: ${legalRankText()}.`;
     els.turnText.textContent = myTurn ? prompt : `Warte auf ${gameState.activePlayerName || 'den aktiven Spieler'} …`;
     els.skipBtn.disabled = !myTurn || gameState.newRowMode;
@@ -294,7 +330,7 @@
       return `<div class="rank-slot ${edge?'edge':''}"><span class="rank-label">${RANK_LABELS[rank]}</span>${card?`<img src="${card.image}" alt="${escapeHtml(card.id)}" />`:''}</div>`;
     }).join('');
     els.myHandCount.textContent = gameState.self.hand.length;
-    els.handHint.textContent = myTurn ? prompt : 'Du siehst nur deine eigenen Karten. Die Handkarten der anderen bleiben verborgen.';
+    els.handHint.textContent = gameState.self.eliminated ? 'Du bist ausgeschieden und schaust der laufenden Partie zu.' : (myTurn ? prompt : 'Du siehst nur deine eigenen Karten. Die Handkarten der anderen bleiben verborgen.');
     els.handCards.innerHTML = gameState.self.hand.map(card => {
       const playable = myTurn && (gameState.newRowMode || gameState.legalRanks.includes(card.rank));
       return `<button class="hand-card ${playable?'playable':'unplayable'}" data-card-id="${card.id}" ${playable?'':'disabled'}><img src="${card.image}" alt="${escapeHtml(card.id)}" />${playable?'<span class="legal-pill">spielbar</span>':''}</button>`;
@@ -311,12 +347,10 @@
     return !gameState.newRowMode && (gameState.legalRanks || []).includes(rank);
   }
 
-  function renderLog() {
-    els.gameLog.innerHTML = [...gameState.log].reverse().map(e=>`<div class="log-entry ${e.type||''}"><strong>${escapeHtml(e.time)}</strong> · ${escapeHtml(e.text)}</div>`).join('');
-  }
 
   function showRoundDialog() {
     if (gameState.phase !== 'roundEnd' || !gameState.roundSummary) return;
+    els.gameOverLeaveBtn.classList.add('hidden');
     const s = gameState.roundSummary;
     els.roundTitle.textContent = `${s.winnerName} gewinnt Runde ${gameState.round}!`;
     const penalties = s.penalties || [];
@@ -327,6 +361,18 @@
       <div class="subtle">Nicht geleerte Pots bleiben für die nächste Runde liegen. Wer eine Pot-Karte auf der Hand behält, zahlt für dieses Feld in der nächsten Runde doppelt.</div>`;
     els.nextRoundBtn.classList.toggle('hidden', !gameState.isHost);
     els.roundWaitText.classList.toggle('hidden', gameState.isHost);
+    if (!els.roundDialog.open) els.roundDialog.showModal();
+  }
+
+  function showGameOverDialog() {
+    if (gameState.phase !== 'gameOver' || !gameState.gameSummary) return;
+    const s = gameState.gameSummary;
+    els.roundTitle.textContent = s.tied ? 'Partie beendet – Unentschieden' : `${s.winnerName} gewinnt die Partie!`;
+    els.roundSummary.innerHTML = `${s.standings.map((p,i)=>`<div class="summary-row"><span>${i+1}. ${escapeHtml(p.name)}</span><strong>Chipwert ${p.value}</strong></div>`).join('')}
+      <div class="subtle">Die Partie endet, sobald nach der Einzahl-/Ausscheidungsphase nur noch zwei aktive Spieler übrig sind. Bei Gleichstand gibt es ein Unentschieden.</div>`;
+    els.nextRoundBtn.classList.add('hidden');
+    els.roundWaitText.classList.add('hidden');
+    els.gameOverLeaveBtn.classList.remove('hidden');
     if (!els.roundDialog.open) els.roundDialog.showModal();
   }
 
@@ -377,6 +423,7 @@
     els.rulesBtn.addEventListener('click', ()=>els.rulesDialog.showModal());
     els.closeRulesBtn.addEventListener('click', ()=>els.rulesDialog.close());
     els.nextRoundBtn.addEventListener('click', ()=>{ if(els.roundDialog.open) els.roundDialog.close(); action('nextRound'); });
+    els.gameOverLeaveBtn.addEventListener('click', ()=>{ if(els.roundDialog.open) els.roundDialog.close(); clearSession(); });
     els.skipBtn.addEventListener('click', ()=>action('skip'));
     els.autoAnteBtn.addEventListener('click', ()=>action('autoAnte'));
     els.confirmAnteBtn.addEventListener('click', ()=>action('confirmAnte'));
