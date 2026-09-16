@@ -10,6 +10,10 @@ const roomSubscribers = new Map();
 
 const CHIP_VALUES = { bronze: 1, silver: 2, gold: 5 };
 const START_CHIPS = { bronze: 15, silver: 10, gold: 5 };
+const MIN_PLAYERS = 3;
+const MAX_PLAYERS = 6;
+const ELIMINATION_THRESHOLD = 7;
+const DEAL_COUNTS = { 3: 15, 4: 12, 5: 9, 6: 8 };
 const RANKS = [
   { value: 1, label: 'A' }, { value: 2, label: '2' }, { value: 3, label: '3' }, { value: 4, label: '4' },
   { value: 5, label: '5' }, { value: 6, label: '6' }, { value: 7, label: '7' }, { value: 8, label: '8' },
@@ -128,11 +132,12 @@ function createRoom(hostName) {
     updatedAt: Date.now(),
     round: 1,
     phase: 'lobby',
-    players: [{ id, name: hostName, chips: cloneChips(START_CHIPS) }],
+    players: [{ id, name: hostName, chips: cloneChips(START_CHIPS), eliminated: false }],
     pots: Object.fromEntries(Object.keys(POT_DEFS).map(potId => [potId, { chips: emptyChips() }])),
     antePaid: {},
     anteRequirements: {},
     anteConfirmed: {},
+    anteResolution: {},
     nextAntePenalties: {},
     hands: {},
     leftovers: [],
@@ -146,7 +151,8 @@ function createRoom(hostName) {
     consecutiveSkips: 0,
     log: [],
     winnerId: null,
-    roundSummary: null
+    roundSummary: null,
+    gameSummary: null
   };
   rooms.set(code, room);
   addLog(room, `${hostName} hat den Raum erstellt.`, 'special');
@@ -167,6 +173,112 @@ function requireTurn(room, playerId) {
   const active = room.players[room.activePlayerIndex];
   if (!active || active.id !== playerId) throw new Error('Du bist gerade nicht am Zug.');
   return active;
+}
+function activePlayers(room) { return room.players.filter(p => !p.eliminated); }
+function activePlayerCount(room) { return activePlayers(room).length; }
+function nextActivePlayerIndex(room, fromIndex) {
+  if (!room.players.length) return -1;
+  for (let step = 1; step <= room.players.length; step++) {
+    const idx = (fromIndex + step) % room.players.length;
+    if (!room.players[idx].eliminated) return idx;
+  }
+  return -1;
+}
+function ensureActiveHost(room) {
+  const host = room.players.find(p => p.id === room.hostId);
+  if (host && !host.eliminated) return;
+  const nextHost = activePlayers(room)[0];
+  if (nextHost) {
+    room.hostId = nextHost.id;
+    addLog(room, `${nextHost.name} ist jetzt Host, weil der bisherige Host ausgeschieden ist.`, 'special');
+  }
+}
+function personalAnteValue(room, playerId) {
+  return Object.keys(POT_DEFS).reduce((sum, potId) => sum + chipValue(personalRequirement(room, playerId, potId)), 0);
+}
+function distributeAllChipsRandomly(room, player) {
+  const potIds = Object.keys(POT_DEFS);
+  const distributed = Object.fromEntries(potIds.map(potId => [potId, emptyChips()]));
+  for (const type of ['bronze','silver','gold']) {
+    const count = player.chips[type];
+    for (let i = 0; i < count; i++) {
+      const potId = potIds[Math.floor(Math.random() * potIds.length)];
+      room.pots[potId].chips[type] += 1;
+      distributed[potId][type] += 1;
+      if (room.antePaid[player.id]?.[potId]) room.antePaid[player.id][potId][type] += 1;
+    }
+    player.chips[type] = 0;
+  }
+  return distributed;
+}
+function finishGame(room) {
+  const remaining = activePlayers(room);
+  const standings = remaining.map(p => ({
+    playerId: p.id,
+    name: p.name,
+    value: chipValue(p.chips),
+    chips: cloneChips(p.chips)
+  })).sort((a,b) => b.value - a.value || a.name.localeCompare(b.name, 'de'));
+  const best = standings[0]?.value ?? 0;
+  const winners = standings.filter(s => s.value === best);
+  room.phase = 'gameOver';
+  room.winnerId = winners.length === 1 ? winners[0].playerId : null;
+  room.gameSummary = {
+    standings,
+    winnerName: winners.length === 1 ? winners[0].name : null,
+    tied: winners.length > 1,
+    tiedNames: winners.map(w => w.name)
+  };
+  room.hands = {};
+  room.leftovers = [];
+  room.currentRow = Array(13).fill(null);
+  room.rowOrder = [];
+  room.rowDirection = null;
+  room.newRowMode = true;
+  if (winners.length === 1) addLog(room, `🏆 ${winners[0].name} gewinnt die Partie mit Chipwert ${best}.`, 'special');
+  else addLog(room, `🤝 Die Partie endet unentschieden bei Chipwert ${best}.`, 'special');
+}
+function resolveAnteShortfalls(room) {
+  room.anteResolution = {};
+  for (const player of activePlayers(room)) {
+    const startingValue = chipValue(player.chips);
+    const requiredValue = personalAnteValue(room, player.id);
+    if (startingValue >= requiredValue) continue;
+
+    const distributed = distributeAllChipsRandomly(room, player);
+    const eliminated = startingValue < ELIMINATION_THRESHOLD;
+    room.anteConfirmed[player.id] = true;
+    room.anteResolution[player.id] = {
+      automatic: true,
+      startingValue,
+      requiredValue,
+      eliminated,
+      distributed
+    };
+    if (eliminated) {
+      player.eliminated = true;
+      addLog(room, `${player.name} konnte nur Chipwert ${startingValue} einzahlen. Die restlichen Chips wurden zufällig verteilt; ${player.name} scheidet aus.`, 'bad');
+    } else {
+      addLog(room, `${player.name} kann den vollen Einsatz nicht zahlen, verteilt deshalb alle Chips im Wert ${startingValue} zufällig auf die Pots und bleibt im Spiel.`, 'special');
+    }
+  }
+
+  ensureActiveHost(room);
+  if (activePlayerCount(room) <= 2) {
+    finishGame(room);
+    return;
+  }
+
+  if (activePlayers(room).every(p => room.anteConfirmed[p.id])) dealRound(room);
+}
+function beginAntePhase(room) {
+  room.phase = 'ante';
+  room.antePaid = makeAntePaid(room.players);
+  room.anteRequirements = makeAnteRequirements(room.players, room.nextAntePenalties);
+  room.anteConfirmed = Object.fromEntries(room.players.map(p => [p.id, !!p.eliminated]));
+  room.anteResolution = {};
+  room.nextAntePenalties = emptyPenaltyMap(room.players);
+  resolveAnteShortfalls(room);
 }
 function playerAnteComplete(room, playerId) {
   return Object.keys(POT_DEFS).every(potId => requirementsMet(personalRequirement(room, playerId, potId), room.antePaid[playerId][potId]));
@@ -196,7 +308,10 @@ function archiveRow(room, reason) {
     room.rowHistory.push({ cards: [...room.rowOrder], direction: room.rowDirection, reason });
   }
 }
-function advanceTurn(room) { room.activePlayerIndex = (room.activePlayerIndex + 1) % room.players.length; }
+function advanceTurn(room) {
+  const next = nextActivePlayerIndex(room, room.activePlayerIndex);
+  if (next >= 0) room.activePlayerIndex = next;
+}
 function payoutSpecial(room, card, player) {
   const found = Object.entries(POT_DEFS).find(([,def]) => def.suit === card.suit && def.rank === card.rank);
   if (!found) return;
@@ -220,16 +335,19 @@ function transferValue(from, to, requested) {
   return paid;
 }
 function dealRound(room) {
+  const participants = activePlayers(room);
+  const count = DEAL_COUNTS[participants.length];
+  if (!count) throw new Error(`Für ${participants.length} aktive Spieler ist keine Kartenverteilung definiert.`);
   const deck = shuffle(buildDeck());
-  const count = room.players.length === 4 ? 12 : 15;
   room.hands = Object.fromEntries(room.players.map(p => [p.id, []]));
   let cursor = 0;
   for (let r = 0; r < count; r++) {
-    for (const p of room.players) room.hands[p.id].push(deck[cursor++]);
+    for (const p of participants) room.hands[p.id].push(deck[cursor++]);
   }
-  for (const p of room.players) sortHand(room.hands[p.id]);
+  for (const p of participants) sortHand(room.hands[p.id]);
   room.leftovers = deck.slice(cursor);
-  room.activePlayerIndex = Math.floor(Math.random() * room.players.length);
+  const opener = participants[Math.floor(Math.random() * participants.length)];
+  room.activePlayerIndex = room.players.findIndex(p => p.id === opener.id);
   room.currentRow = Array(13).fill(null);
   room.rowOrder = [];
   room.rowDirection = null;
@@ -240,14 +358,15 @@ function dealRound(room) {
   room.phase = 'playing';
   room.winnerId = null;
   room.roundSummary = null;
-  addLog(room, `${count} Karten pro Spieler ausgeteilt. ${room.leftovers.length} Karten bleiben verdeckt.`, 'special');
-  addLog(room, `${room.players[room.activePlayerIndex].name} eröffnet die erste Reihe.`, 'special');
+  room.gameSummary = null;
+  addLog(room, `${count} Karten pro aktivem Spieler ausgeteilt. ${room.leftovers.length} Karten bleiben verdeckt.`, 'special');
+  addLog(room, `${opener.name} eröffnet die erste Reihe.`, 'special');
 }
 function endRound(room, winnerId) {
   const winner = requirePlayer(room, winnerId);
   const summary = [];
   let totalReceived = 0;
-  for (const p of room.players) {
+  for (const p of activePlayers(room)) {
     if (p.id === winnerId) continue;
     const owed = room.hands[p.id].length;
     const paid = transferValue(p, winner, owed);
@@ -257,7 +376,7 @@ function endRound(room, winnerId) {
   }
   const nextPenalties = emptyPenaltyMap(room.players);
   const penaltySummary = [];
-  for (const p of room.players) {
+  for (const p of activePlayers(room)) {
     const hand = room.hands[p.id] || [];
     for (const [potId, def] of Object.entries(POT_DEFS)) {
       if (hand.some(card => card.suit === def.suit && card.rank === def.rank)) {
@@ -275,11 +394,6 @@ function endRound(room, winnerId) {
 }
 function startNextRound(room) {
   room.round += 1;
-  room.phase = 'ante';
-  room.antePaid = makeAntePaid(room.players);
-  room.anteRequirements = makeAnteRequirements(room.players, room.nextAntePenalties);
-  room.anteConfirmed = Object.fromEntries(room.players.map(p => [p.id, false]));
-  room.nextAntePenalties = emptyPenaltyMap(room.players);
   room.hands = {};
   room.leftovers = [];
   room.currentRow = Array(13).fill(null);
@@ -291,7 +405,9 @@ function startNextRound(room) {
   room.consecutiveSkips = 0;
   room.winnerId = null;
   room.roundSummary = null;
-  addLog(room, `Runde ${room.round}: Neue Pflichteinsätze. Nicht geleerte Pots bleiben bestehen.`, 'special');
+  room.gameSummary = null;
+  addLog(room, `Runde ${room.round}: Neue Einzahlphase. Nicht geleerte Pots bleiben bestehen.`, 'special');
+  beginAntePhase(room);
 }
 
 function publicState(room, playerId) {
@@ -303,7 +419,7 @@ function publicState(room, playerId) {
     isHost: room.hostId === playerId,
     round: room.round,
     phase: room.phase,
-    self: { id: player.id, name: player.name, chips: cloneChips(player.chips), hand: room.hands[player.id] || [] },
+    self: { id: player.id, name: player.name, chips: cloneChips(player.chips), hand: room.hands[player.id] || [], eliminated: !!player.eliminated },
     players: room.players.map(p => ({
       id: p.id,
       name: p.name,
@@ -311,14 +427,17 @@ function publicState(room, playerId) {
       handCount: room.hands[p.id]?.length || 0,
       isHost: p.id === room.hostId,
       isActive: active?.id === p.id,
-      anteConfirmed: !!room.anteConfirmed[p.id]
+      anteConfirmed: !!room.anteConfirmed[p.id],
+      eliminated: !!p.eliminated
     })),
     pots: room.pots,
     potDefs: POT_DEFS,
     antePaid: room.antePaid[playerId] || null,
     anteRequirements: room.anteRequirements?.[playerId] || null,
     anteConfirmed: !!room.anteConfirmed[playerId],
-    allAnteConfirmed: room.phase !== 'ante' ? false : room.players.every(p => room.anteConfirmed[p.id]),
+    anteResolution: room.anteResolution?.[playerId] || null,
+    activePlayerCount: activePlayerCount(room),
+    allAnteConfirmed: room.phase !== 'ante' ? false : activePlayers(room).every(p => room.anteConfirmed[p.id]),
     currentRow: room.currentRow,
     rowOrder: room.rowOrder || [],
     rowDirection: room.rowDirection,
@@ -330,9 +449,9 @@ function publicState(room, playerId) {
     consecutiveSkips: room.consecutiveSkips,
     lastPlayedBy: room.lastPlayedBy,
     totalPotValue: totalPot(room),
-    log: room.log.slice(-80),
     winnerId: room.winnerId,
-    roundSummary: room.roundSummary
+    roundSummary: room.roundSummary,
+    gameSummary: room.gameSummary
   };
 }
 
@@ -438,10 +557,10 @@ async function handleApi(req, res, url) {
       const room = rooms.get(code);
       if (!room) return fail(res, 404, 'Raum nicht gefunden.');
       if (room.phase !== 'lobby') return fail(res, 409, 'Dieses Spiel wurde bereits gestartet.');
-      if (room.players.length >= 4) return fail(res, 409, 'Der Raum ist bereits voll.');
+      if (room.players.length >= MAX_PLAYERS) return fail(res, 409, 'Der Raum ist bereits voll.');
       if (room.players.some(p => p.name.toLocaleLowerCase('de') === name.toLocaleLowerCase('de'))) return fail(res, 409, 'Dieser Spielername ist im Raum bereits vergeben.');
       const playerId = randomId();
-      room.players.push({ id: playerId, name, chips: cloneChips(START_CHIPS) });
+      room.players.push({ id: playerId, name, chips: cloneChips(START_CHIPS), eliminated: false });
       if (room.nextAntePenalties) room.nextAntePenalties[playerId] = Object.fromEntries(Object.keys(POT_DEFS).map(potId => [potId, false]));
       addLog(room, `${name} ist dem Raum beigetreten.`, 'good');
       broadcastRoom(room);
@@ -477,13 +596,12 @@ async function handleApi(req, res, url) {
       if (action === 'start') {
         if (room.hostId !== playerId) throw new Error('Nur der Host kann das Spiel starten.');
         if (room.phase !== 'lobby') throw new Error('Das Spiel wurde bereits gestartet.');
-        if (room.players.length < 3 || room.players.length > 4) throw new Error('Es werden 3 oder 4 Spieler benötigt.');
-        room.phase = 'ante';
-        room.antePaid = makeAntePaid(room.players);
-        room.anteRequirements = makeAnteRequirements(room.players);
-        room.anteConfirmed = Object.fromEntries(room.players.map(p => [p.id, false]));
+        if (room.players.length < MIN_PLAYERS || room.players.length > MAX_PLAYERS) throw new Error(`Es werden ${MIN_PLAYERS} bis ${MAX_PLAYERS} Spieler benötigt.`);
         room.nextAntePenalties = emptyPenaltyMap(room.players);
         addLog(room, 'Das Spiel startet. Alle zahlen jetzt ihre Pflichtchips ein.', 'special');
+        beginAntePhase(room);
+      } else if (player.eliminated && ['deposit','autoAnte','confirmAnte','play','skip'].includes(action)) {
+        throw new Error('Du bist aus der Partie ausgeschieden und kannst nur noch zuschauen.');
       } else if (action === 'deposit') {
         if (room.phase !== 'ante') throw new Error('Aktuell ist keine Einsatzphase.');
         if (room.anteConfirmed[playerId]) throw new Error('Du hast deinen Einsatz bereits bestätigt.');
@@ -531,7 +649,7 @@ async function handleApi(req, res, url) {
         if (!playerAnteComplete(room, playerId)) throw new Error('Es fehlen noch Pflichtchips.');
         room.anteConfirmed[playerId] = true;
         addLog(room, `${player.name} ist mit dem Einsatz fertig.`, 'good');
-        if (room.players.every(p => room.anteConfirmed[p.id])) dealRound(room);
+        if (activePlayers(room).every(p => room.anteConfirmed[p.id])) dealRound(room);
       } else if (action === 'play') {
         if (room.phase !== 'playing') throw new Error('Die Runde läuft gerade nicht.');
         requireTurn(room, playerId);
@@ -585,14 +703,14 @@ async function handleApi(req, res, url) {
         if (room.newRowMode) throw new Error('Du musst eine neue Reihe eröffnen und kannst jetzt nicht skippen.');
         room.consecutiveSkips += 1;
         addLog(room, `${player.name} skippt.`);
-        if (room.consecutiveSkips >= room.players.length && room.lastPlayedBy) {
+        if (room.consecutiveSkips >= activePlayerCount(room) && room.lastPlayedBy) {
           archiveRow(room, 'unterbrochen nach kompletter Skip-Runde');
           room.currentRow = Array(13).fill(null);
           room.rowOrder = [];
           room.rowDirection = null;
           room.newRowMode = true;
           const lastIndex = room.players.findIndex(p => p.id === room.lastPlayedBy);
-          room.activePlayerIndex = (lastIndex + 1) % room.players.length;
+          room.activePlayerIndex = nextActivePlayerIndex(room, lastIndex);
           room.consecutiveSkips = 0;
           const opener = room.players[room.activePlayerIndex];
           const lastPlayer = room.players[lastIndex];
