@@ -312,7 +312,7 @@ function addValue(player, value) {
 function modeUsesEndgame(room) { return room.gameMode === 'abschiebe' || room.gameMode === 'chaos'; }
 function endgameStage(room) {
   if (!modeUsesEndgame(room) || room.endgameStartRound == null) return 0;
-  return Math.max(1, Math.min(4, 1 + Math.floor((room.round - room.endgameStartRound) / 3)));
+  return Math.max(1, 1 + Math.floor((room.round - room.endgameStartRound) / 3));
 }
 function cardPenaltyMultiplier(room) {
   const stage = endgameStage(room);
@@ -320,12 +320,12 @@ function cardPenaltyMultiplier(room) {
 }
 function eliminationThreshold(room) {
   const stage = endgameStage(room);
-  return stage ? Math.min(15, 7 + stage * 2) : STANDARD_ELIMINATION_THRESHOLD;
+  return stage ? 7 + stage * 4 : STANDARD_ELIMINATION_THRESHOLD;
 }
 function activateEndgameIfNeeded(room) {
   if (!modeUsesEndgame(room) || room.endgameStartRound != null) return;
   room.endgameStartRound = room.round;
-  addLog(room, `🔥 Endgame aktiviert: Restkarten-Strafe ×2. Ab der nächsten Einzahlphase braucht man mindestens Chipwert 9, um eine Not-Einzahlung zu überleben.`, 'special');
+  addLog(room, `🔥 Endgame aktiviert: Restkarten-Strafe ×2. Ab der nächsten Einzahlphase braucht man mindestens Chipwert 11, um eine Not-Einzahlung zu überleben.`, 'special');
 }
 function finishGame(room) {
   const remaining = activePlayers(room);
@@ -418,8 +418,23 @@ function baseLegalRanks(room) {
   if (room.newRowMode || !room.rowOrder?.length) return RANKS.map(r => r.value);
   const startRank = playedRank(room.rowOrder[0]);
   if (room.rowOrder.length === 1 || room.rowDirection === null) return [wrapRank(startRank - 1), wrapRank(startRank + 1)];
-  if (room.springerGapRank && room.currentRow.filter(Boolean).length === 12 && !room.currentRow[room.springerGapRank - 1]) return [room.springerGapRank];
-  return [wrapRank(room.rowCursorRank + room.rowDirection)];
+
+  const filledCount = room.currentRow.filter(Boolean).length;
+  if (room.springerGapRank && !room.currentRow[room.springerGapRank - 1]) {
+    // Eine aktive Blockade zählt für die Springer-Lücke als absichtlich fehlender Rang.
+    // Dadurch können Blockierer + Springer zusammen nicht die Reihe festfahren.
+    const blockedMissing = room.blockedRank && room.blockedRank !== room.springerGapRank && !room.currentRow[room.blockedRank - 1];
+    const neededBeforeGap = blockedMissing ? 11 : 12;
+    if (filledCount >= neededBeforeGap) return [room.springerGapRank];
+  }
+
+  let next = wrapRank(room.rowCursorRank + room.rowDirection);
+  // Blockierer sperrt den Rang, aber die Reihe läuft dahinter weiter.
+  // Beispiel aufwärts: 5, 6, [7 blockiert], 8, 9 ...
+  if (room.blockedRank && next === room.blockedRank && !room.currentRow[next - 1]) {
+    next = wrapRank(next + room.rowDirection);
+  }
+  return [next];
 }
 function legalRanks(room, { ignoreBlock = false } = {}) {
   const seen = new Set();
@@ -769,6 +784,12 @@ function endRound(room, winnerId) {
 }
 function startNextRound(room) {
   room.round += 1;
+  // Im Chaos-Modus werden nach jeweils 5 vollständig gespielten Runden
+  // die Fähigkeiten aller noch aktiven Spieler neu aus dem Pool verlost.
+  if (room.gameMode === 'chaos' && (room.round - 1) % 5 === 0) {
+    assignChaosAbilities(room);
+    addLog(room, `🔄 Nach 5 gespielten Runden wurden die Chaos-Fähigkeiten für Runde ${room.round} neu vergeben.`, 'special');
+  }
   room.hands = {};
   room.leftovers = [];
   resetRow(room);
@@ -1461,5 +1482,5 @@ setInterval(() => {
 }, 30 * 60 * 1000).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Gelber Zwerg V4 läuft auf http://localhost:${PORT}`);
+  console.log(`Gelber Zwerg V4.2 läuft auf http://localhost:${PORT}`);
 });
