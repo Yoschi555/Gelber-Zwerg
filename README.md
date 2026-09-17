@@ -1,4 +1,4 @@
-# Gelber Zwerg – Internet V4.0
+# Gelber Zwerg – Internet V4.2.0
 
 Online-Multiplayer für 3–6 Spieler mit eigener öffentlicher URL.
 
@@ -19,8 +19,8 @@ Siehe **INTERNET_DEPLOY_RENDER.md**. Die Version enthält bereits eine `render.y
 ## Spielmodi
 
 - **Standard** – bisheriges klassisches Regelwerk.
-- **Abschiebe** – nach dem ersten Ausscheiden startet das Endgame: Restkarten-Strafe ×2 und Überlebensgrenze 9; nach jeweils drei weiteren Runden steigen beide weiter bis maximal ×5 / Grenze 15.
-- **Chaos** – übernimmt das Abschiebe-Endgame und lost jedem Spieler zu Partiebeginn eine von 16 Spezialfähigkeiten zu. Die eigene Fähigkeit wird mit Erklärung und Status im Spiel angezeigt.
+- **Abschiebe** – nach dem ersten Ausscheiden startet das Endgame: Restkarten-Strafe ×2 und Überlebensgrenze 11; nach jeweils drei weiteren Runden steigt die Überlebensgrenze um weitere 4 (15, 19, 23, …). Die Restkarten-Strafe steigt parallel bis maximal ×5.
+- **Chaos** – übernimmt das Abschiebe-Endgame und lost jedem Spieler zu Partiebeginn eine von 16 Spezialfähigkeiten zu. Die eigene Fähigkeit wird mit Erklärung und Status im Spiel angezeigt. Nach jeweils 5 vollständig gespielten Runden werden die Fähigkeiten der aktiven Spieler neu aus dem Pool verlost.
 
 ## Chaos-Fähigkeiten
 
@@ -56,3 +56,13 @@ Tauschen, Fallensteller, Springer, Kehrtwende, Späher, Nachtreter, Dieb, Blocki
 ## Wichtig
 
 Die Räume werden aktuell nur im Arbeitsspeicher gehalten. Ein Neustart oder Redeploy des Servers beendet bestehende Räume.
+
+
+## V4.1
+- Blockierer: Die laufende Reihe überspringt den gesperrten Rang nun korrekt und kann mit den übrigen 12 Rängen abgeschlossen werden.
+- Chaos: Nach jeweils 5 vollständig gespielten Runden werden die Fähigkeiten der aktiven Spieler neu ausgelost.
+
+
+## V4.2
+- Endgame: Die Ausscheidungsgrenze steigt nun bei jeder Stufe um 4 statt um 2. Start im Endgame: 11, danach 15, 19, 23, …
+- Die Restkarten-Strafe bleibt bei ×2, ×3, ×4 und anschließend maximal ×5.

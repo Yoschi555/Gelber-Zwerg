@@ -1,8 +1,8 @@
 {
   "name": "gelber-zwerg-online",
-  "version": "2.0.0",
+  "version": "4.2.0",
   "private": true,
-  "description": "Online-Multiplayer-Prototyp für Gelber Zwerg",
+  "description": "Online-Multiplayer für Gelber Zwerg mit Standard-, Abschiebe- und Chaos-Modus",
   "scripts": {
     "start": "node server.js"
   },
