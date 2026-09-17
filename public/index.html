@@ -11,13 +11,11 @@
   <div id="app">
     <section id="entryScreen" class="screen active entry-screen">
       <div class="entry-card">
-        <div class="brand-kicker">YI Kartenwelt</div>
+        <div class="brand-kicker">YI Kartenwelt · V4</div>
         <h1>Gelber Zwerg</h1>
-        <p class="lead">Online-Multiplayer für 3–6 Spieler. Jeder öffnet die Seite auf seinem eigenen Gerät, gibt seinen Namen ein und tritt demselben Raum bei.</p>
-
+        <p class="lead">Online-Multiplayer für 3–6 Spieler. Erstellt einen Raum, wählt euren Modus und spielt auf getrennten Geräten.</p>
         <label class="field-label" for="playerName">Dein Spielername</label>
         <input id="playerName" class="text-input" maxlength="18" placeholder="z. B. Lukas" autocomplete="nickname" />
-
         <div class="entry-actions">
           <button id="createRoomBtn" class="btn primary big">Neues Spiel erstellen</button>
           <div class="or-line"><span>oder</span></div>
@@ -27,35 +25,39 @@
           </div>
         </div>
         <div id="entryError" class="message error hidden"></div>
-        <div class="entry-note">Der Host startet, sobald 3 bis 6 Spieler im Raum sind.</div>
+        <div class="entry-note">Der Host wählt den Spielmodus und startet mit 3 bis 6 Spielern.</div>
       </div>
     </section>
 
     <section id="lobbyScreen" class="screen lobby-screen">
       <header class="topbar">
-        <div>
-          <div class="brand-kicker">Online-Lobby</div>
-          <h2>Gelber Zwerg</h2>
-        </div>
+        <div><div class="brand-kicker">Online-Lobby</div><h2>Gelber Zwerg</h2></div>
         <button id="leaveLobbyBtn" class="btn ghost">Verlassen</button>
       </header>
-
       <main class="lobby-wrap">
         <section class="room-card panel">
           <div class="room-code-block">
-            <span>Raumcode</span>
-            <strong id="roomCodeLabel">-----</strong>
+            <span>Raumcode</span><strong id="roomCodeLabel">-----</strong>
             <button id="copyRoomBtn" class="btn secondary">Einladungslink kopieren</button>
           </div>
-          <p class="subtle">Jeder Mitspieler öffnet dieselbe Website, trägt einen eigenen Namen ein und gibt diesen Code ein.</p>
+          <p class="subtle">Jeder Mitspieler öffnet dieselbe Website, gibt einen eigenen Namen ein und tritt mit diesem Code bei.</p>
+        </section>
+
+        <section class="panel mode-card">
+          <div class="section-head">
+            <div><div class="panel-title">Spielmodus</div><div id="modeHelp" class="subtle">Der Host wählt den Modus.</div></div>
+            <div id="modeBadge" class="mode-badge">Standard</div>
+          </div>
+          <div id="modeChoices" class="mode-choices">
+            <button class="mode-option" data-mode="standard"><strong>Standard</strong><span>Klassische Regeln.</span></button>
+            <button class="mode-option" data-mode="abschiebe"><strong>Abschiebe</strong><span>Nach dem ersten Aus: steigende Ausscheidungsgrenze + höhere Restkarten-Strafe.</span></button>
+            <button class="mode-option chaos" data-mode="chaos"><strong>Chaos</strong><span>Abschiebe-Endgame plus zufällig zugeloste Spezialfähigkeit pro Spieler.</span></button>
+          </div>
         </section>
 
         <section class="panel lobby-players-card">
           <div class="section-head">
-            <div>
-              <div class="panel-title">Spieler im Raum</div>
-              <div id="lobbyCountText" class="subtle">1/6</div>
-            </div>
+            <div><div class="panel-title">Spieler im Raum</div><div id="lobbyCountText" class="subtle">1/6</div></div>
             <div id="hostBadge" class="host-badge hidden">Du bist Host</div>
           </div>
           <div id="lobbyPlayers" class="lobby-players"></div>
@@ -68,7 +70,7 @@
     <section id="gameScreen" class="screen game-screen">
       <header class="topbar game-topbar">
         <div>
-          <div class="brand-kicker">Raum <span id="gameRoomCode">-----</span> · Runde <span id="roundLabel">1</span></div>
+          <div class="brand-kicker">Raum <span id="gameRoomCode">-----</span> · Runde <span id="roundLabel">1</span> · <span id="gameModeLabel">Standard</span></div>
           <h2 id="phaseTitle">Einsatzphase</h2>
         </div>
         <div class="topbar-actions">
@@ -85,19 +87,23 @@
           <div class="status-card"><span>Phase</span><strong id="statusPhase">—</strong></div>
           <div class="status-card"><span>Aktiv</span><strong id="statusActive">—</strong></div>
           <div class="status-card"><span>Reihe</span><strong id="statusRow">—</strong></div>
-          <div class="status-card accent"><span>Pot gesamt</span><strong id="statusPot">0</strong></div>
+          <div class="status-card accent"><span>Endgame / Pot</span><strong id="statusPot">0</strong></div>
+        </section>
+
+        <section id="rowSection" class="panel row-panel hidden">
+          <div class="section-head compact-head">
+            <div><div class="panel-title">Aktuelle Reihe</div><div id="rowHint" class="subtle">—</div></div>
+            <div class="small-stats"><span>Rest <strong id="leftoverCount">0</strong></span><span>Skips <strong id="skipCount">0</strong></span></div>
+          </div>
+          <div id="rankTrack" class="rank-track"></div>
         </section>
 
         <section class="table-layout">
           <div class="panel pot-panel">
-            <div class="section-head">
-              <div>
-                <div class="panel-title">Pot-Felder</div>
-                <div id="potHint" class="subtle">Ziehe Chips auf die passenden Felder.</div>
-              </div>
+            <div class="section-head compact-head">
+              <div><div class="panel-title">Pots</div><div id="potHint" class="subtle">Ziehe Chips auf die passenden Felder.</div></div>
               <div class="pot-total">Wert <strong id="potTotal">0</strong></div>
             </div>
-
             <div class="pot-board">
               <img src="assets/ui/pot-board.webp" alt="Gelber-Zwerg-Pot-Feld" />
               <button class="pot-zone pot-green-k" data-pot="greenK"></button>
@@ -111,7 +117,7 @@
 
           <aside class="side-stack">
             <section id="antePanel" class="panel side-panel">
-              <div class="panel-title">Dein Chip-Inventar</div>
+              <div class="panel-title">Deine Chips</div>
               <div id="anteStateText" class="subtle">Zahle deine Pflichtchips ein.</div>
               <div id="chipInventory" class="chip-inventory"></div>
               <button id="autoAnteBtn" class="btn secondary full">Automatisch einzahlen</button>
@@ -124,49 +130,35 @@
               <button id="skipBtn" class="btn secondary full">Skip</button>
             </section>
 
+            <section id="abilityPanel" class="panel side-panel ability-panel hidden">
+              <div class="ability-top"><div><div class="panel-title">Deine Fähigkeit</div><strong id="abilityName">—</strong></div><span id="abilityUses" class="tag">—</span></div>
+              <div id="abilityDescription" class="subtle ability-description">—</div>
+              <div id="abilityStatus" class="ability-status">—</div>
+              <button id="abilityBtn" class="btn ability full">Fähigkeit nutzen</button>
+            </section>
           </aside>
         </section>
 
-        <section id="playSection" class="play-section hidden">
-          <div class="panel row-panel">
-            <div class="section-head">
-              <div>
-                <div class="panel-title">Aktuelle Reihe</div>
-                <div id="rowHint" class="subtle">—</div>
-              </div>
-              <div class="small-stats"><span>Übrig <strong id="leftoverCount">0</strong></span><span>Skips <strong id="skipCount">0</strong></span></div>
-            </div>
-            <div id="rankTrack" class="rank-track"></div>
+        <section id="handPanel" class="panel hand-panel hidden">
+          <div class="section-head compact-head">
+            <div><div class="panel-title">Deine Hand</div><div id="handHint" class="subtle">—</div></div>
+            <div class="hand-count">Karten <strong id="myHandCount">0</strong></div>
           </div>
-
-          <div class="panel hand-panel">
-            <div class="section-head">
-              <div>
-                <div class="panel-title">Deine Hand</div>
-                <div id="handHint" class="subtle">—</div>
-              </div>
-              <div class="hand-count">Karten <strong id="myHandCount">0</strong></div>
-            </div>
-            <div id="handCards" class="hand-cards"></div>
-          </div>
+          <div id="handCards" class="hand-cards"></div>
         </section>
       </main>
     </section>
   </div>
 
-  <dialog id="rulesDialog" class="dialog-card">
-    <div class="dialog-head">
-      <h3>Regeln</h3>
-      <button id="closeRulesBtn" class="btn ghost">Schließen</button>
-    </div>
+  <dialog id="rulesDialog" class="dialog-card wide-dialog">
+    <div class="dialog-head"><h3>Regeln & Modi</h3><button id="closeRulesBtn" class="btn ghost">Schließen</button></div>
     <div class="rules-copy">
-      <p>3–6 Spieler. Jeder startet mit 15 Bronze-, 10 Silber- und 5 Gold-Chips.</p>
-      <p>Pflichteinsatz pro Runde: Rot 10 = 1 Bronze, Pokéball Bube = 1 Silber, Flammen Dame = 3 Bronze, Grün König = 2 Silber, Rot 7 = 1 Gold.</p>
-      <p>Kartenverteilung: 3 Spieler = 15 Karten (7 Rest), 4 Spieler = 12 Karten (4 Rest), 5 Spieler = 9 Karten (7 Rest), 6 Spieler = 8 Karten (4 Rest).</p>
-      <p>Eine Reihe startet mit einer beliebigen Karte. Danach sind zunächst beide direkten Nachbarn erlaubt – zyklisch, also z. B. auf 7 eine 6 oder 8 und auf Ass eine 2 oder König. Mit der zweiten Karte wird die Richtung festgelegt. Beispiel aufwärts: 7 → 8 → 9 → 10 → Bube → Dame → König → Ass → 2 …; abwärts entsprechend 7 → 6 → 5 → 4 → 3 → 2 → Ass → König … . Nach 13 unterschiedlichen Rängen ist die Reihe vollständig.</p>
-      <p>Wer erfolgreich legt, bleibt am Zug und darf direkt weitere passende Karten spielen. Erst mit Skip wird an den nächsten Spieler abgegeben. Skippt eine komplette Tischrunde, darf der direkt nach dem letzten erfolgreichen Spieler folgende Spieler eine neue Reihe eröffnen. Ist der 13er-Zyklus vollständig, darf der aktuelle Spieler direkt neu eröffnen.</p>
-      <p>Wer eine der fünf Pot-Karten spielt, erhält sofort den ganzen zugehörigen Pot. Hat ein Spieler am Rundenende eine solche Pot-Karte noch auf der Hand, muss er in der nächsten Runde für genau dieses Pot-Feld den doppelten persönlichen Pflichteinsatz zahlen. Beispiel: Rot 7 auf der Hand = nächste Runde 2 Gold statt 1 Gold. Wer zuerst keine Handkarten mehr hat, gewinnt die Runde; die anderen zahlen entsprechend ihrer Restkartenanzahl.</p>
-      <p>Pleite-Regel: Kann ein Spieler zu Beginn einer Runde seinen vollständigen persönlichen Einsatz nicht mehr bezahlen, werden alle seine verbliebenen Chips zufällig auf die fünf Pots verteilt. Mit Chipwert 7 oder mehr bleibt er aktiv; mit Chipwert 6 oder weniger scheidet er danach aus und erhält keine Karten mehr. Sobald nur noch zwei aktive Spieler übrig sind, endet die Partie und ihre aktuellen Chipwerte werden verglichen.</p>
+      <p><strong>Standard:</strong> klassische Regeln. Unter Chipwert 7 scheidet man bei einer Not-Einzahlung aus; Restkarten kosten Wert 1 pro Karte.</p>
+      <p><strong>Abschiebe:</strong> Sobald der erste Spieler ausscheidet, startet das Endgame. Die Überlebensgrenze steigt auf 9 und die Restkarten-Strafe auf ×2. Nach jeweils 3 weiteren Runden: 11/×3, 13/×4 und schließlich 15/×5.</p>
+      <p><strong>Chaos:</strong> gleiche Endgame-Regeln wie Abschiebe. Zusätzlich bekommt jeder zu Partiebeginn zufällig eine eigene Fähigkeit, die für die ganze Partie bleibt.</p>
+      <p>Pflichteinsatz pro Runde: Rot 10 = 1 Bronze, Pokéball Bube = 1 Silber, Flammen Dame = 3 Bronze, Grün König = 2 Silber, Rot 7 = 1 Gold. Nicht ausgespielte Pot-Karten verdoppeln den persönlichen Einsatz für genau diesen Pot in der nächsten Runde.</p>
+      <p>Eine Reihe startet beliebig. Die zweite Karte legt die zyklische Richtung fest. Erfolgreiches Legen beendet den Zug nicht; du darfst weiterlegen und gibst erst mit Skip ab. Nach 13 Rängen ist die Reihe komplett.</p>
+      <p>Kartenverteilung: 3 Spieler = 15 Karten, 4 = 12, 5 = 9, 6 = 8. Wer zuerst keine Handkarten mehr hat, gewinnt die Runde.</p>
     </div>
   </dialog>
 
@@ -176,6 +168,18 @@
     <button id="nextRoundBtn" class="btn primary full hidden">Nächste Runde starten</button>
     <button id="gameOverLeaveBtn" class="btn secondary full hidden">Zur Startseite</button>
     <div id="roundWaitText" class="subtle centered hidden">Warte auf den Host …</div>
+  </dialog>
+
+  <dialog id="abilityDialog" class="dialog-card ability-dialog">
+    <div class="dialog-head"><h3 id="abilityDialogTitle">Fähigkeit</h3><button id="closeAbilityBtn" class="btn ghost">Schließen</button></div>
+    <div id="abilityDialogBody" class="ability-dialog-body"></div>
+  </dialog>
+
+  <dialog id="reactionDialog" class="dialog-card reaction-dialog">
+    <div class="dialog-head"><h3>⚡ Nachtreter</h3></div>
+    <p class="subtle">Der Spieler nach dir hat seinen Zug beendet. Du kannst jetzt genau eine passende Karte nachlegen.</p>
+    <div id="reactionCards" class="reaction-cards"></div>
+    <button id="reactionPassBtn" class="btn secondary full">Nicht nachtreten</button>
   </dialog>
 
   <div id="toast" class="toast"></div>
