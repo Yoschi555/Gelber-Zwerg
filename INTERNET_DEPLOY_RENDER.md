@@ -31,8 +31,8 @@ Diese Adresse schickst du allen Mitspielern. Sie funktioniert auch aus einem and
 - Einer öffnet die öffentliche URL, gibt seinen Namen ein und erstellt einen Raum.
 - Er schickt den angezeigten 5-stelligen Raumcode an die anderen.
 - Die anderen öffnen **dieselbe öffentliche URL**, geben ihren eigenen Namen + Raumcode ein und joinen.
-- Bei 3 oder 4 Spielern kann der Host starten.
+- Bei 3 bis 6 Spielern kann der Host starten.
 
-## Hinweis zur aktuellen V3
+## Hinweis zur aktuellen V4
 
 Die Räume liegen im Arbeitsspeicher des Servers. Bei einem Server-Neustart oder Redeploy gehen laufende Räume verloren. Für normale einzelne Spielabende ist das okay. Eine spätere Version kann die Räume dauerhaft in einer Datenbank speichern.
