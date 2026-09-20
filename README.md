@@ -1,4 +1,4 @@
-# Gelber Zwerg – Internet V4.2.0
+# Gelber Zwerg – Internet V4.4.0
 
 Online-Multiplayer für 3–6 Spieler mit eigener öffentlicher URL.
 
@@ -19,12 +19,12 @@ Siehe **INTERNET_DEPLOY_RENDER.md**. Die Version enthält bereits eine `render.y
 ## Spielmodi
 
 - **Standard** – bisheriges klassisches Regelwerk.
-- **Abschiebe** – nach dem ersten Ausscheiden startet das Endgame: Restkarten-Strafe ×2 und Überlebensgrenze 11; nach jeweils drei weiteren Runden steigt die Überlebensgrenze um weitere 4 (15, 19, 23, …). Die Restkarten-Strafe steigt parallel bis maximal ×5.
-- **Chaos** – übernimmt das Abschiebe-Endgame und lost jedem Spieler zu Partiebeginn eine von 16 Spezialfähigkeiten zu. Die eigene Fähigkeit wird mit Erklärung und Status im Spiel angezeigt. Nach jeweils 5 vollständig gespielten Runden werden die Fähigkeiten der aktiven Spieler neu aus dem Pool verlost.
+- **Abschiebe** – die heiße Phase startet beim ersten Ausscheiden oder spätestens nach 8 vollständig gespielten Runden: Restkarten-Strafe ×2 und Überlebensgrenze 11; nach jeweils drei weiteren Runden steigt die Überlebensgrenze um weitere 4 (15, 19, 23, …). Die Restkarten-Strafe steigt parallel bis maximal ×5.
+- **Chaos** – übernimmt das Abschiebe-Endgame inklusive Start beim ersten Ausscheiden oder spätestens nach 8 vollständig gespielten Runden und lost jedem Spieler zu Partiebeginn eine von 20 Spezialfähigkeiten zu. Die eigene Fähigkeit wird mit Erklärung und Status im Spiel angezeigt. Nach jeweils 5 vollständig gespielten Runden werden die Fähigkeiten der aktiven Spieler neu aus dem Pool verlost.
 
 ## Chaos-Fähigkeiten
 
-Tauschen, Fallensteller, Springer, Kehrtwende, Späher, Nachtreter, Dieb, Blockierer, Schmuggler, Drängler, Glücksritter, Halsabschneider, Multiplikator, Zocker, Fälscher und Leichtgewicht.
+Tauschen, Fallensteller, Springer, Kehrtwende, Späher, Nachtreter, Dieb, Blockierer, Schmuggler, Drängler, Glücksritter, Halsabschneider, Multiplikator, Zocker, Fälscher, Leichtgewicht, Kopierer, Handblocker, Maskenwechsel und Susanoo.
 
 ## Layout V4
 
@@ -66,3 +66,18 @@ Die Räume werden aktuell nur im Arbeitsspeicher gehalten. Ein Neustart oder Red
 ## V4.2
 - Endgame: Die Ausscheidungsgrenze steigt nun bei jeder Stufe um 4 statt um 2. Start im Endgame: 11, danach 15, 19, 23, …
 - Die Restkarten-Strafe bleibt bei ×2, ×3, ×4 und anschließend maximal ×5.
+
+
+## V4.3
+- Chaos-Pool auf 20 Fähigkeiten erweitert.
+- **Kopierer:** kopiert einmal pro Runde die Fähigkeit eines anderen aktiven Spielers für den Rest der Runde; Kopierer selbst kann nicht kopiert werden.
+- **Handblocker:** blockiert einmal pro Runde 3 zufällige Handkarten eines gewählten Gegners für dessen nächsten eigenen Zug.
+- **Maskenwechsel:** ersetzt einmal pro Runde geheim die Auslöser von 2 Spezial-Pots durch 2 andere zufällige Karten; nur der Nutzer kennt die Ersatzkarten.
+- **Susanoo:** zerstört einmal pro Runde im eigenen Zug die aktuelle Reihe und eröffnet sofort mit einer eigenen Karte neu; Kosten Wert 5 als je 1 Bronze in jeden Pot.
+- **Dieb:** löst jetzt bei jedem selbst abgeräumten Spezial-Pot aus und raubt jeweils 3 Bronze vom aktuell reichsten anderen Spieler.
+- **Glücksritter:** der Bonus für den gewählten Pot beträgt jetzt 2 Silber (Wert 4) aus der Bank.
+
+
+## V4.4
+- Abschiebe und Chaos: Die heiße Endgame-Phase startet jetzt entweder beim ersten Ausscheiden oder automatisch nach 8 vollständig gespielten Runden. Ohne vorheriges Ausscheiden beginnt sie damit vor Runde 9.
+- Danach gelten wie bisher Überlebensgrenze 11 und Restkarten-Strafe ×2; nach jeweils 3 weiteren Runden steigt die Grenze um 4 und die Restkarten-Strafe bis maximal ×5.

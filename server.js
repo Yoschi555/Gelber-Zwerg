@@ -60,8 +60,8 @@ const ABILITIES = {
     description: 'Bis zu zweimal pro Runde fragt dich das Spiel nach dem Zug deines direkten Nachfolgers, ob du noch genau 1 passende Karte nachlegen willst.'
   },
   dieb: {
-    name: 'Dieb', kind: 'passive', maxUses: 1,
-    description: 'Einmal pro Runde, wenn du einen Spezial-Pot abräumst, raubst du zusätzlich 3 Bronze (Wert 3) vom aktuell chipreichsten anderen Spieler.'
+    name: 'Dieb', kind: 'passive', maxUses: null,
+    description: 'Jedes Mal, wenn du einen Spezial-Pot abräumst, raubst du zusätzlich 3 Bronze vom aktuell chipreichsten anderen Spieler. Mehrere Pots in derselben Runde lösen den Effekt mehrfach aus.'
   },
   blockierer: {
     name: 'Blockierer', kind: 'active', maxUses: 1,
@@ -77,7 +77,7 @@ const ABILITIES = {
   },
   gluecksritter: {
     name: 'Glücksritter', kind: 'setup', maxUses: 1,
-    description: 'Wähle zu Rundenbeginn geheim einen Pot. Räumst du genau diesen Pot selbst ab, erhältst du zusätzlich Wert 3 aus der Bank.'
+    description: 'Wähle zu Rundenbeginn geheim einen Pot. Räumst du genau diesen Pot selbst ab, erhältst du zusätzlich 2 Silber aus der Bank (Wert 4).'
   },
   halsabschneider: {
     name: 'Halsabschneider', kind: 'setup', maxUses: 1,
@@ -98,6 +98,22 @@ const ABILITIES = {
   leichtgewicht: {
     name: 'Leichtgewicht', kind: 'passive', maxUses: 1,
     description: 'Du startest jede Runde mit 1 Handkarte weniger. Dafür zahlst du zu Rundenbeginn 1 Bronze in einen zufälligen Pot.'
+  },
+  kopierer: {
+    name: 'Kopierer', kind: 'active', maxUses: 1,
+    description: 'Einmal pro Runde wählst du einen anderen aktiven Spieler und kopierst dessen Fähigkeit für den Rest dieser Runde. Kopierer selbst kann nicht kopiert werden.'
+  },
+  handblocker: {
+    name: 'Handblocker', kind: 'active', maxUses: 1,
+    description: 'Einmal pro Runde wählst du einen anderen Spieler. 3 zufällige Handkarten sind in dessen nächstem eigenen Zug blockiert und können dort nicht ausgespielt werden.'
+  },
+  maskenwechsel: {
+    name: 'Maskenwechsel', kind: 'setup', maxUses: 1,
+    description: 'Einmal pro Runde werden 2 der 5 Spezial-Pots geheim auf andere zufällige Karten umgelegt. Nur du siehst die beiden neuen Auslöser.'
+  },
+  susanoo: {
+    name: 'Susanoo', kind: 'active', maxUses: 1,
+    description: 'Einmal pro Runde zerstörst du in deinem Zug die aktuelle Reihe und eröffnest sofort mit einer beliebigen eigenen Karte neu. Kosten: Wert 5, als je 1 Bronze in jeden Pot.'
   }
 };
 const ABILITY_IDS = Object.keys(ABILITIES);
@@ -217,6 +233,8 @@ function createRoom(hostName) {
     blockedRank: null,
     blockedBy: null,
     pendingReaction: null,
+    handBlocks: {},
+    maskedPotTriggers: {},
     abilityRound: {},
     playerRoundActions: {},
     turnPlayCounts: {},
@@ -322,10 +340,16 @@ function eliminationThreshold(room) {
   const stage = endgameStage(room);
   return stage ? 7 + stage * 4 : STANDARD_ELIMINATION_THRESHOLD;
 }
-function activateEndgameIfNeeded(room) {
+function activateEndgameIfNeeded(room, reason = 'elimination') {
   if (!modeUsesEndgame(room) || room.endgameStartRound != null) return;
   room.endgameStartRound = room.round;
-  addLog(room, `🔥 Endgame aktiviert: Restkarten-Strafe ×2. Ab der nächsten Einzahlphase braucht man mindestens Chipwert 11, um eine Not-Einzahlung zu überleben.`, 'special');
+  const timingText = reason === 'roundLimit'
+    ? 'Nach 8 vollständig gespielten Runden startet die heiße Phase.'
+    : 'Durch das erste Ausscheiden startet die heiße Phase.';
+  const anteText = reason === 'roundLimit'
+    ? 'Ab dieser Einzahlphase braucht man mindestens Chipwert 11, um eine Not-Einzahlung zu überleben.'
+    : 'Ab der nächsten Einzahlphase braucht man mindestens Chipwert 11, um eine Not-Einzahlung zu überleben.';
+  addLog(room, `🔥 ${timingText} Restkarten-Strafe ×2. ${anteText}`, 'special');
 }
 function finishGame(room) {
   const remaining = activePlayers(room);
@@ -468,17 +492,54 @@ function clearBlockIfOwnerTurn(room, idx) {
 }
 function setRegularTurn(room, idx) {
   if (idx < 0) return;
+  const previous = room.players[room.activePlayerIndex];
+  const nextPlayer = room.players[idx];
+  if (previous && previous.id !== nextPlayer.id) {
+    const previousBlock = room.handBlocks?.[previous.id];
+    if (previousBlock?.active) {
+      delete room.handBlocks[previous.id];
+      addLog(room, `🖐️ Die Handblockade von ${previous.name} ist nach dem eigenen Zug aufgehoben.`, 'special');
+    }
+  }
   room.activePlayerIndex = idx;
-  room.turnPlayCounts[room.players[idx].id] = 0;
+  room.turnPlayCounts[nextPlayer.id] = 0;
+  const nextBlock = room.handBlocks?.[nextPlayer.id];
+  if (nextBlock?.pending) {
+    nextBlock.pending = false;
+    nextBlock.active = true;
+    addLog(room, `🖐️ Bei ${nextPlayer.name} sind in diesem Zug 3 zufällige Handkarten blockiert.`, 'bad');
+  }
   clearBlockIfOwnerTurn(room, idx);
 }
 function advanceTurn(room, steps = 1) {
   const next = nextActivePlayerIndex(room, room.activePlayerIndex, steps);
   if (next >= 0) setRegularTurn(room, next);
 }
+function freshAbilityState() {
+  return {
+    uses: 0, selectedRank: null, selectedPot: null, triggered: false, info: null, armed: false,
+    lightweightApplied: false, copiedAbilityId: null, copiedFromPlayerId: null, copiedFromName: null,
+    copiedState: null
+  };
+}
 function abilityState(room, playerId) {
-  if (!room.abilityRound[playerId]) room.abilityRound[playerId] = { uses: 0 };
+  if (!room.abilityRound[playerId]) room.abilityRound[playerId] = freshAbilityState();
   return room.abilityRound[playerId];
+}
+function effectiveAbilityId(room, player) {
+  const baseState = abilityState(room, player.id);
+  return player.abilityId === 'kopierer' && baseState.copiedAbilityId ? baseState.copiedAbilityId : player.abilityId;
+}
+function effectiveAbilityState(room, player) {
+  const baseState = abilityState(room, player.id);
+  if (player.abilityId === 'kopierer' && baseState.copiedAbilityId) {
+    if (!baseState.copiedState) baseState.copiedState = freshAbilityState();
+    return baseState.copiedState;
+  }
+  return baseState;
+}
+function playerHasAbility(room, player, abilityId) {
+  return room.gameMode === 'chaos' && effectiveAbilityId(room, player) === abilityId;
 }
 function assignChaosAbilities(room) {
   const pool = shuffle(ABILITY_IDS);
@@ -493,8 +554,10 @@ function resetAbilityRound(room) {
   room.blockedRank = null;
   room.blockedBy = null;
   room.pendingReaction = null;
+  room.handBlocks = {};
+  room.maskedPotTriggers = {};
   for (const p of room.players) {
-    room.abilityRound[p.id] = { uses: 0, selectedRank: null, selectedPot: null, triggered: false, info: null, armed: false, lightweightApplied: false };
+    room.abilityRound[p.id] = freshAbilityState();
     room.playerRoundActions[p.id] = { acted: false };
     room.turnPlayCounts[p.id] = 0;
   }
@@ -508,14 +571,18 @@ function requireTurn(room, playerId) {
   if (!active || active.id !== playerId) throw new Error('Du bist gerade nicht am Zug.');
   return active;
 }
+function isHandCardBlocked(room, playerId, cardId) {
+  const block = room.handBlocks?.[playerId];
+  return !!block?.active && block.cardIds.includes(cardId);
+}
 function hasNormalPlayableCard(room, playerId) {
   const hand = room.hands[playerId] || [];
   const legal = new Set(legalRanks(room));
-  return hand.some(c => legal.has(c.rank));
+  return hand.some(c => !isHandCardBlocked(room, playerId, c.id) && legal.has(c.rank));
 }
 function applyLightweight(room, player) {
-  if (player.abilityId !== 'leichtgewicht') return;
-  const state = abilityState(room, player.id);
+  if (!playerHasAbility(room, player, 'leichtgewicht')) return;
+  const state = effectiveAbilityState(room, player);
   if (chipValue(player.chips) < 1 || !room.hands[player.id]?.length) {
     addLog(room, `🪶 ${player.name} kann Leichtgewicht diese Runde nicht bezahlen und startet normal.`, 'special');
     return;
@@ -571,8 +638,8 @@ function triggerFallensteller(room, entry, actor) {
   if (room.gameMode !== 'chaos') return;
   const rank = playedRank(entry);
   for (const trapper of activePlayers(room)) {
-    if (trapper.abilityId !== 'fallensteller') continue;
-    const state = abilityState(room, trapper.id);
+    if (!playerHasAbility(room, trapper, 'fallensteller')) continue;
+    const state = effectiveAbilityState(room, trapper);
     if (!state.selectedRank || state.triggered || state.selectedRank !== rank) continue;
     state.triggered = true;
     if (trapper.id === actor.id) {
@@ -584,7 +651,6 @@ function triggerFallensteller(room, entry, actor) {
       const paid = transferValue(actor, trapper, 4);
       addLog(room, `🪤 ${actor.name} löst ${trapper.name}s Falle auf ${rankLabel(rank)} aus. ${trapper.name} raubt Wert ${paid}.`, 'special');
     }
-    break;
   }
 }
 function richestOther(room, playerId) {
@@ -594,40 +660,60 @@ function richestOther(room, playerId) {
   return randomChoice(others.filter(p => chipValue(p.chips) === max));
 }
 function applyDieb(room, player) {
-  if (room.gameMode !== 'chaos' || player.abilityId !== 'dieb') return;
-  const state = abilityState(room, player.id);
-  if (state.uses >= 1) return;
+  if (!playerHasAbility(room, player, 'dieb')) return;
+  const state = effectiveAbilityState(room, player);
   const victim = richestOther(room, player.id);
   if (!victim) return;
   const paid = Math.min(3, chipValue(victim.chips));
   if (paid <= 0) return;
   victim.chips = chipsForValue(chipValue(victim.chips) - paid);
   player.chips.bronze += paid;
-  state.uses = 1;
-  addLog(room, `🦹 ${player.name} nutzt Dieb und raubt ${paid} Bronze-Wert von ${victim.name}.`, 'special');
+  state.uses = (state.uses || 0) + 1;
+  state.info = { steals: state.uses, lastVictim: victim.name, lastPaid: paid };
+  addLog(room, `🦹 ${player.name} nutzt Dieb und raubt für diesen Pot ${paid} Bronze von ${victim.name}.`, 'special');
 }
 function applyGluecksritter(room, player, potId) {
-  if (room.gameMode !== 'chaos' || player.abilityId !== 'gluecksritter') return;
-  const state = abilityState(room, player.id);
+  if (!playerHasAbility(room, player, 'gluecksritter')) return;
+  const state = effectiveAbilityState(room, player);
   if (state.selectedPot !== potId || state.triggered) return;
   state.triggered = true;
-  player.chips.bronze += 3;
-  addLog(room, `🍀 ${player.name} trifft als Glücksritter den gewählten Pot und erhält 3 Bronze aus der Bank.`, 'special');
+  player.chips.silver += 2;
+  addLog(room, `🍀 ${player.name} trifft als Glücksritter den gewählten Pot und erhält 2 Silber (Wert 4) aus der Bank.`, 'special');
 }
 function payoutSpecial(room, entry, player) {
   if (entry.forged) return;
-  const found = Object.entries(POT_DEFS).find(([,def]) => def.suit === entry.suit && def.rank === entry.rank);
-  if (!found) return;
-  const [potId, def] = found;
+
+  let potId = null;
+  let masked = false;
+  for (const [candidatePotId, trigger] of Object.entries(room.maskedPotTriggers || {})) {
+    if (trigger.suit === entry.suit && trigger.rank === entry.rank) {
+      potId = candidatePotId;
+      masked = true;
+      break;
+    }
+  }
+
+  if (!potId) {
+    const normal = Object.entries(POT_DEFS).find(([,def]) => def.suit === entry.suit && def.rank === entry.rank);
+    if (!normal) return;
+    const [normalPotId, normalDef] = normal;
+    if (room.maskedPotTriggers?.[normalPotId]) {
+      addLog(room, `🎭 ${normalDef.label} ist diese Runde maskiert und räumt seinen Pot nicht ab.`, 'special');
+      return;
+    }
+    potId = normalPotId;
+  }
+
+  const def = POT_DEFS[potId];
   const pot = room.pots[potId].chips;
   const value = chipValue(pot);
   if (value <= 0) {
-    addLog(room, `${def.label} wurde gespielt, aber der Pot war leer.`);
+    addLog(room, masked ? `🎭 Eine geheime Ersatzkarte löst ${def.label} aus, aber der Pot ist leer.` : `${def.label} wurde gespielt, aber der Pot war leer.`);
     return;
   }
 
   let paidValue = value;
-  const cutter = activePlayers(room).find(p => p.abilityId === 'halsabschneider' && abilityState(room, p.id).selectedPot === potId);
+  const cutter = activePlayers(room).find(p => playerHasAbility(room, p, 'halsabschneider') && effectiveAbilityState(room, p).selectedPot === potId);
   if (room.gameMode === 'chaos' && cutter) {
     paidValue = Math.floor(value / 2);
     const remainingValue = value - paidValue;
@@ -637,15 +723,15 @@ function payoutSpecial(room, entry, player) {
   } else {
     for (const type of ['bronze','silver','gold']) player.chips[type] += pot[type];
     room.pots[potId].chips = emptyChips();
-    addLog(room, `💰 ${player.name} spielt ${def.label} und erhält Pot-Wert ${value}.`, 'special');
+    addLog(room, masked ? `🎭 ${player.name} spielt eine geheime Ersatzkarte und räumt ${def.label} mit Pot-Wert ${value} ab.` : `💰 ${player.name} spielt ${def.label} und erhält Pot-Wert ${value}.`, 'special');
   }
   applyGluecksritter(room, player, potId);
   applyDieb(room, player);
 }
 function maybeAwardMultiplier(room, playerId) {
   const player = findPlayer(room, playerId);
-  if (!player || player.abilityId !== 'multiplikator' || room.gameMode !== 'chaos') return 0;
-  const state = abilityState(room, playerId);
+  if (!player || !playerHasAbility(room, player, 'multiplikator')) return 0;
+  const state = effectiveAbilityState(room, player);
   if (state.uses >= 1) return 0;
   const cards = room.turnPlayCounts[playerId] || 0;
   if (cards < 3) return 0;
@@ -664,6 +750,7 @@ function placeCard(room, player, handIndex, asRank, flags = {}) {
   const hand = room.hands[player.id] || [];
   const card = hand[handIndex];
   if (!card) throw new Error('Karte nicht auf deiner Hand gefunden.');
+  if (isHandCardBlocked(room, player.id, card.id)) throw new Error('Diese Karte ist durch Handblocker für deinen aktuellen Zug gesperrt.');
   if (!flags.springer && !isPlayable(room, card, asRank)) throw new Error('Diese Karte passt gerade nicht.');
   const entry = makePlayedCard(card, asRank, flags);
   hand.splice(handIndex, 1);
@@ -708,7 +795,9 @@ function completeRowForPlayer(room, player, reason) {
   room.springerGapRank = null;
   room.lastPlayedBy = player.id;
   room.consecutiveSkips = 0;
-  room.activePlayerIndex = room.players.findIndex(p => p.id === player.id);
+  const playerIndex = room.players.findIndex(p => p.id === player.id);
+  if (room.players[room.activePlayerIndex]?.id !== player.id) setRegularTurn(room, playerIndex);
+  else room.activePlayerIndex = playerIndex;
   addLog(room, blockedStill ? `Die Reihe gilt trotz blockiertem Rang als vollständig. ${player.name} eröffnet sofort neu.` : `Alle benötigten Ränge sind vollständig! ${player.name} eröffnet sofort eine neue Reihe.`, 'special');
 }
 function checkNachtreterAfterSkip(room, skipperIndex, resumeSteps = 1) {
@@ -716,8 +805,8 @@ function checkNachtreterAfterSkip(room, skipperIndex, resumeSteps = 1) {
   const predecessorIndex = previousActivePlayerIndex(room, skipperIndex);
   if (predecessorIndex < 0) return false;
   const candidate = room.players[predecessorIndex];
-  if (!candidate || candidate.abilityId !== 'nachtreter') return false;
-  const state = abilityState(room, candidate.id);
+  if (!candidate || !playerHasAbility(room, candidate, 'nachtreter')) return false;
+  const state = effectiveAbilityState(room, candidate);
   if (state.uses >= 2) return false;
   const legal = new Set(legalRanks(room));
   const playableIds = (room.hands[candidate.id] || []).filter(c => legal.has(c.rank)).map(c => c.id);
@@ -784,6 +873,11 @@ function endRound(room, winnerId) {
 }
 function startNextRound(room) {
   room.round += 1;
+  // Abschiebe/Chaos: Spätestens nach 8 vollständig gespielten Runden
+  // startet die heiße Endgame-Phase, auch wenn noch niemand ausgeschieden ist.
+  if (modeUsesEndgame(room) && room.endgameStartRound == null && room.round >= 9) {
+    activateEndgameIfNeeded(room, 'roundLimit');
+  }
   // Im Chaos-Modus werden nach jeweils 5 vollständig gespielten Runden
   // die Fähigkeiten aller noch aktiven Spieler neu aus dem Pool verlost.
   if (room.gameMode === 'chaos' && (room.round - 1) % 5 === 0) {
@@ -806,15 +900,21 @@ function startNextRound(room) {
 }
 function abilityPublic(room, player) {
   if (room.gameMode !== 'chaos' || !player.abilityId) return null;
-  const def = ABILITIES[player.abilityId];
-  const state = abilityState(room, player.id);
+  const baseState = abilityState(room, player.id);
+  const copied = player.abilityId === 'kopierer' && !!baseState.copiedAbilityId;
+  const abilityId = copied ? baseState.copiedAbilityId : player.abilityId;
+  const def = ABILITIES[abilityId];
+  const state = copied ? (baseState.copiedState || freshAbilityState()) : baseState;
   const acted = !!room.playerRoundActions[player.id]?.acted;
   const ownTurn = atOwnTurn(room, player.id);
   const result = {
-    id: player.abilityId,
-    name: def.name,
+    id: abilityId,
+    baseId: player.abilityId,
+    copied,
+    copiedFromName: copied ? baseState.copiedFromName : null,
+    name: copied ? `Kopierer → ${def.name}` : def.name,
     kind: def.kind,
-    description: def.description,
+    description: copied ? `Für diese Runde kopiert von ${baseState.copiedFromName}: ${def.description}` : def.description,
     uses: state.uses || 0,
     maxUses: def.maxUses,
     canUse: false,
@@ -826,9 +926,27 @@ function abilityPublic(room, player) {
     armed: !!state.armed,
     info: state.info || null
   };
-  if (player.eliminated || room.phase !== 'playing') { result.reason = player.eliminated ? 'Ausgeschieden' : 'Nur während der Spielrunde'; return result; }
-  if (room.pendingReaction) { result.reason = room.pendingReaction.playerId === player.id ? 'Reaktion läuft' : 'Warte auf Reaktion'; return result; }
-  switch (player.abilityId) {
+
+  if (player.eliminated || room.phase !== 'playing') {
+    result.reason = player.eliminated ? 'Ausgeschieden' : 'Nur während der Spielrunde';
+    return result;
+  }
+  if (room.pendingReaction) {
+    result.reason = room.pendingReaction.playerId === player.id ? 'Reaktion läuft' : 'Warte auf Reaktion';
+    return result;
+  }
+
+  if (player.abilityId === 'kopierer' && !copied) {
+    const targets = activePlayers(room)
+      .filter(p => p.id !== player.id && p.abilityId !== 'kopierer' && effectiveAbilityId(room, p))
+      .map(p => ({ playerId: p.id, name: p.name, abilityId: effectiveAbilityId(room, p), abilityName: ABILITIES[effectiveAbilityId(room, p)].name }));
+    result.options.targets = targets;
+    result.canUse = baseState.uses < 1 && targets.length > 0;
+    result.reason = result.canUse ? '' : baseState.uses ? 'Diese Runde benutzt' : 'Keine kopierbare Fähigkeit verfügbar';
+    return result;
+  }
+
+  switch (abilityId) {
     case 'tauschen':
       result.canUse = state.uses < 1 && !acted && (room.hands[player.id]?.length || 0) >= 2 && room.leftovers.length >= 2;
       result.options.cardIds = (room.hands[player.id] || []).map(c => c.id);
@@ -842,7 +960,7 @@ function abilityPublic(room, player) {
     case 'springer': {
       const next = room.rowDirection && room.rowCursorRank ? wrapRank(room.rowCursorRank + room.rowDirection) : null;
       const jump = next ? wrapRank(next + room.rowDirection) : null;
-      const cards = jump ? (room.hands[player.id] || []).filter(c => c.rank === jump && !room.currentRow[jump - 1] && !rankBlocked(room, jump)).map(c => c.id) : [];
+      const cards = jump ? (room.hands[player.id] || []).filter(c => c.rank === jump && !room.currentRow[jump - 1] && !rankBlocked(room, jump) && !isHandCardBlocked(room, player.id, c.id)).map(c => c.id) : [];
       result.options.cardIds = cards;
       result.options.skippedRank = next;
       result.options.jumpRank = jump;
@@ -862,7 +980,7 @@ function abilityPublic(room, player) {
       result.reason = `Reaktiv · ${state.uses || 0}/2 genutzt`;
       break;
     case 'dieb':
-      result.reason = state.uses ? 'Diese Runde ausgelöst' : 'Löst automatisch beim ersten eigenen Pot-Gewinn aus';
+      result.reason = state.uses ? `Automatisch · bereits ${state.uses} Pot${state.uses === 1 ? '' : 's'} bestohlen` : 'Löst automatisch bei jedem eigenen Spezial-Pot-Gewinn aus';
       break;
     case 'blockierer': {
       const ranks = RANKS.map(r => r.value).filter(r => !room.currentRow[r - 1]);
@@ -898,6 +1016,7 @@ function abilityPublic(room, player) {
       const opts = [];
       if (ownTurn && state.uses < 1) {
         for (const card of room.hands[player.id] || []) {
+          if (isHandCardBlocked(room, player.id, card.id)) continue;
           for (const direction of [-1, 1]) {
             const asRank = wrapRank(card.rank + direction);
             if (isPlayable(room, card, asRank)) opts.push({ cardId: card.id, direction, asRank });
@@ -912,6 +1031,26 @@ function abilityPublic(room, player) {
     case 'leichtgewicht':
       result.reason = state.lightweightApplied ? `Automatisch aktiv · 1 Bronze in ${POT_DEFS[state.selectedPot]?.label || 'einen Pot'}` : 'Automatisch; falls du 1 Wert bezahlen kannst';
       break;
+    case 'handblocker': {
+      const targets = activePlayers(room)
+        .filter(p => p.id !== player.id && (room.hands[p.id]?.length || 0) > 0 && !room.handBlocks?.[p.id])
+        .map(p => ({ playerId: p.id, name: p.name, handCount: room.hands[p.id]?.length || 0 }));
+      result.options.targets = targets;
+      result.canUse = state.uses < 1 && targets.length > 0;
+      result.reason = result.canUse ? '' : state.uses ? 'Diese Runde benutzt' : 'Kein gültiges Ziel verfügbar';
+      break;
+    }
+    case 'maskenwechsel':
+      result.canUse = state.uses < 1 && !acted && Object.keys(room.maskedPotTriggers || {}).length <= 3;
+      result.reason = result.canUse ? '' : state.uses ? 'Diese Runde benutzt' : acted ? 'Nur vor deiner ersten Spielaktion' : 'Nicht genug unmaskierte Pots verfügbar';
+      break;
+    case 'susanoo': {
+      const cards = (room.hands[player.id] || []).filter(c => !rankBlocked(room, c.rank) && !isHandCardBlocked(room, player.id, c.id)).map(c => c.id);
+      result.options.cardIds = cards;
+      result.canUse = state.uses < 1 && ownTurn && !room.newRowMode && room.rowOrder.length > 0 && chipValue(player.chips) >= 5 && cards.length > 0;
+      result.reason = result.canUse ? '' : state.uses ? 'Diese Runde benutzt' : !ownTurn ? 'Nur in deinem Zug' : room.newRowMode ? 'Es muss bereits eine Reihe laufen' : chipValue(player.chips) < 5 ? 'Du brauchst Chipwert 5' : 'Keine Karte zum Neueröffnen verfügbar';
+      break;
+    }
   }
   return result;
 }
@@ -946,6 +1085,12 @@ function publicState(room, playerId) {
       chips: cloneChips(player.chips),
       hand: room.hands[player.id] || [],
       eliminated: !!player.eliminated,
+      handBlock: room.handBlocks?.[player.id] ? {
+        active: !!room.handBlocks[player.id].active,
+        pending: !!room.handBlocks[player.id].pending,
+        byName: room.handBlocks[player.id].byName,
+        cardIds: room.handBlocks[player.id].active ? room.handBlocks[player.id].cardIds : []
+      } : null,
       ability: abilityPublic(room, player),
       reaction: reactionForSelf
     },
@@ -1061,10 +1206,31 @@ function handleAbility(room, player, body) {
   if (room.phase !== 'playing') throw new Error('Fähigkeiten können nur während der Spielrunde benutzt werden.');
   if (player.eliminated) throw new Error('Du bist ausgeschieden.');
   if (room.pendingReaction) throw new Error('Gerade wartet das Spiel auf eine Reaktion.');
-  const abilityId = player.abilityId;
-  const state = abilityState(room, player.id);
+  const baseState = abilityState(room, player.id);
   const acted = !!room.playerRoundActions[player.id]?.acted;
   const payload = body.payload || {};
+
+  if (player.abilityId === 'kopierer' && !baseState.copiedAbilityId) {
+    if (baseState.uses >= 1) throw new Error('Kopierer wurde diese Runde schon benutzt.');
+    const targetId = String(payload.targetPlayerId || '');
+    const target = activePlayers(room).find(p => p.id === targetId && p.id !== player.id);
+    if (!target) throw new Error('Wähle einen anderen aktiven Spieler.');
+    if (target.abilityId === 'kopierer') throw new Error('Kopierer kann nicht kopiert werden.');
+    const copiedAbilityId = effectiveAbilityId(room, target);
+    if (!copiedAbilityId || copiedAbilityId === 'kopierer') throw new Error('Diese Fähigkeit kann nicht kopiert werden.');
+    baseState.uses = 1;
+    baseState.copiedAbilityId = copiedAbilityId;
+    baseState.copiedFromPlayerId = target.id;
+    baseState.copiedFromName = target.name;
+    baseState.copiedState = freshAbilityState();
+    baseState.info = { copiedAbilityId, copiedAbilityName: ABILITIES[copiedAbilityId].name, copiedFromName: target.name };
+    addLog(room, `🪞 ${player.name} kopiert für diese Runde die Fähigkeit ${ABILITIES[copiedAbilityId].name} von ${target.name}.`, 'special');
+    if (copiedAbilityId === 'leichtgewicht') applyLightweight(room, player);
+    return;
+  }
+
+  const abilityId = effectiveAbilityId(room, player);
+  const state = effectiveAbilityState(room, player);
 
   if (abilityId === 'tauschen') {
     if (state.uses >= 1 || acted) throw new Error('Tauschen geht nur einmal und vor deiner ersten Spielaktion der Runde.');
@@ -1111,6 +1277,7 @@ function handleAbility(room, player, body) {
     const hand = room.hands[player.id] || [];
     const index = hand.findIndex(c => c.id === cardId && c.rank === jumpRank);
     if (index < 0) throw new Error(`Du brauchst eine ${rankLabel(jumpRank)} für den Sprung.`);
+    if (isHandCardBlocked(room, player.id, cardId)) throw new Error('Diese Karte ist durch Handblocker gesperrt.');
     takeValue(player, 5);
     for (const potId of Object.keys(POT_DEFS)) room.pots[potId].chips.bronze += 1;
     room.springerGapRank = normalNext;
@@ -1237,6 +1404,7 @@ function handleAbility(room, player, body) {
     const hand = room.hands[player.id] || [];
     const index = hand.findIndex(c => c.id === cardId);
     if (index < 0) throw new Error('Karte nicht gefunden.');
+    if (isHandCardBlocked(room, player.id, cardId)) throw new Error('Diese Karte ist durch Handblocker gesperrt.');
     const card = hand[index];
     const asRank = wrapRank(card.rank + direction);
     if (!isPlayable(room, card, asRank)) throw new Error(`Die Karte kann gerade nicht als ${rankLabel(asRank)} gelegt werden.`);
@@ -1246,6 +1414,66 @@ function handleAbility(room, player, body) {
     addLog(room, `🃏 ${player.name} fälscht ${rankLabel(card.rank)} zu ${rankLabel(asRank)}. Spezial-Pots werden dadurch nicht ausgelöst.`, 'special');
     if (result.handEmpty) return endRound(room, player.id);
     if (result.rowComplete) completeRowForPlayer(room, player, 'gefälschte Reihe vollständig');
+    return;
+  }
+
+  if (abilityId === 'handblocker') {
+    if (state.uses >= 1) throw new Error('Handblocker wurde diese Runde schon benutzt.');
+    const targetId = String(payload.targetPlayerId || '');
+    const target = activePlayers(room).find(p => p.id === targetId && p.id !== player.id);
+    if (!target) throw new Error('Wähle einen anderen aktiven Spieler.');
+    if (room.handBlocks?.[target.id]) throw new Error('Dieser Spieler hat bereits eine Handblockade.');
+    const targetHand = room.hands[target.id] || [];
+    if (!targetHand.length) throw new Error('Dieser Spieler hat keine Karten mehr.');
+    const cardIds = shuffle(targetHand).slice(0, Math.min(3, targetHand.length)).map(c => c.id);
+    room.handBlocks[target.id] = { byPlayerId: player.id, byName: player.name, cardIds, pending: true, active: false };
+    state.uses = 1;
+    state.info = { targetPlayerId: target.id, targetName: target.name, count: cardIds.length };
+    addLog(room, `🖐️ ${player.name} belegt ${target.name} mit Handblocker. ${cardIds.length} zufällige Karten sind in ${target.name}s nächstem eigenen Zug gesperrt.`, 'special');
+    return;
+  }
+
+  if (abilityId === 'maskenwechsel') {
+    if (state.uses >= 1 || acted) throw new Error('Maskenwechsel muss vor deiner ersten Spielaktion ausgelöst werden.');
+    const availablePots = Object.keys(POT_DEFS).filter(potId => !room.maskedPotTriggers?.[potId]);
+    if (availablePots.length < 2) throw new Error('Es sind nicht mehr genug unmaskierte Pots verfügbar.');
+    const chosenPots = shuffle(availablePots).slice(0, 2);
+    const forbidden = new Set(Object.values(POT_DEFS).map(def => `${def.suit}-${def.rank}`));
+    for (const trigger of Object.values(room.maskedPotTriggers || {})) forbidden.add(`${trigger.suit}-${trigger.rank}`);
+    const candidates = shuffle(buildDeck().filter(card => !forbidden.has(`${card.suit}-${card.rank}`)));
+    if (candidates.length < 2) throw new Error('Keine gültigen Ersatzkarten verfügbar.');
+    const masks = chosenPots.map((potId, i) => {
+      const card = candidates[i];
+      room.maskedPotTriggers[potId] = { suit: card.suit, rank: card.rank, ownerId: player.id };
+      return { potId, potLabel: POT_DEFS[potId].label, card };
+    });
+    state.uses = 1;
+    state.info = { masks };
+    addLog(room, `🎭 ${player.name} hat zwei Pot-Auslöser geheim maskiert.`, 'special');
+    return;
+  }
+
+  if (abilityId === 'susanoo') {
+    requireTurn(room, player.id);
+    if (state.uses >= 1) throw new Error('Susanoo wurde diese Runde schon benutzt.');
+    if (room.newRowMode || !room.rowOrder.length) throw new Error('Susanoo braucht eine bereits laufende Reihe.');
+    if (chipValue(player.chips) < 5) throw new Error('Susanoo kostet Chipwert 5.');
+    const cardId = String(payload.cardId || '');
+    const hand = room.hands[player.id] || [];
+    const index = hand.findIndex(c => c.id === cardId);
+    if (index < 0) throw new Error('Karte nicht gefunden.');
+    if (isHandCardBlocked(room, player.id, cardId)) throw new Error('Diese Karte ist durch Handblocker gesperrt.');
+    const card = hand[index];
+    if (rankBlocked(room, card.rank)) throw new Error('Dieser Rang ist aktuell blockiert.');
+    archiveRow(room, 'durch Susanoo zerstört');
+    resetRow(room);
+    takeValue(player, 5);
+    for (const potId of Object.keys(POT_DEFS)) room.pots[potId].chips.bronze += 1;
+    state.uses = 1;
+    state.info = { openedWith: card.id };
+    addLog(room, `⚔️ ${player.name} entfesselt Susanoo, zerstört die aktuelle Reihe und zahlt je 1 Bronze in alle fünf Pots.`, 'special');
+    const result = placeCard(room, player, index, card.rank);
+    if (result.handEmpty) return endRound(room, player.id);
     return;
   }
 
@@ -1382,7 +1610,7 @@ async function handleApi(req, res, url) {
         const index = hand.findIndex(c => c.id === cardId);
         if (index < 0) throw new Error('Karte nicht gefunden.');
         room.pendingReaction = null;
-        const state = abilityState(room, playerId);
+        const state = effectiveAbilityState(room, player);
         state.uses += 1;
         const result = placeCard(room, player, index, hand[index].rank, { reaction: true });
         if (result.handEmpty) endRound(room, playerId);
@@ -1416,7 +1644,7 @@ async function handleApi(req, res, url) {
         room.consecutiveSkips += 1;
         addLog(room, `${player.name} skippt.`);
         const idx = room.players.findIndex(p => p.id === playerId);
-        const aState = room.gameMode === 'chaos' && player.abilityId === 'draengler' ? abilityState(room, playerId) : null;
+        const aState = playerHasAbility(room, player, 'draengler') ? effectiveAbilityState(room, player) : null;
         const dränglerActive = !!aState?.armed;
         if (dränglerActive) {
           aState.armed = false;
@@ -1482,5 +1710,5 @@ setInterval(() => {
 }, 30 * 60 * 1000).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Gelber Zwerg V4.2 läuft auf http://localhost:${PORT}`);
+  console.log(`Gelber Zwerg V4.4 läuft auf http://localhost:${PORT}`);
 });
