@@ -245,7 +245,13 @@
       const marker = gameState.gameMode==='chaos' && ability?.selectedPot === potId
         ? ability.id === 'gluecksritter' ? '<span class="ability-marker">🍀 Dein Ziel</span>' : ability.id === 'halsabschneider' ? '<span class="ability-marker">🔪 Markiert</span>' : ''
         : '';
-      return `<div class="pot-legend-item"><strong>${def.label}</strong>${status}${marker}<span>Pflicht: ${reqText(required)}${doubled ? ' · ⚠ doppelt' : ''} · Pot ${chipValue(pot)}</span></div>`;
+      const myMask = ability?.id === 'maskenwechsel' && ability?.info?.masks
+        ? ability.info.masks.find(m => m.potId === potId)
+        : null;
+      const maskMarker = myMask
+        ? `<span class="ability-marker mask-marker">🎭 Ersatz: ${escapeHtml(cardLabel(myMask.card))}</span>`
+        : '';
+      return `<div class="pot-legend-item ${myMask?'my-masked-pot':''}"><strong>${def.label}</strong>${status}${marker}${maskMarker}<span>Pflicht: ${reqText(required)}${doubled ? ' · ⚠ doppelt' : ''} · Pot ${chipValue(pot)}</span></div>`;
     }).join('');
   }
   function potChipIcons(chips) {
@@ -317,10 +323,14 @@
       return `<div class="rank-slot ${edge?'edge':''} ${blocked?'blocked':''} ${gap?'gap':''}"><span class="rank-label">${RANK_LABELS[rank]}</span>${card?`<img src="${card.image}" alt="${escapeHtml(card.id)}" />`:''}${badge}</div>`;
     }).join('');
     els.myHandCount.textContent = gameState.self.hand.length;
-    els.handHint.textContent = gameState.self.eliminated ? 'Du bist ausgeschieden und schaust zu.' : reaction ? 'Nachtreter ist aktiv – spiele genau eine angebotene Karte im Pop-up.' : myTurn ? prompt : 'Deine Karten bleiben privat. Die Hand überlappt automatisch, damit sie groß bleibt.';
+    const activeHandBlock = gameState.self.handBlock?.active;
+    const pendingHandBlock = gameState.self.handBlock?.pending;
+    els.handHint.textContent = gameState.self.eliminated ? 'Du bist ausgeschieden und schaust zu.' : reaction ? 'Nachtreter ist aktiv – spiele genau eine angebotene Karte im Pop-up.' : activeHandBlock ? `🖐️ Handblocker aktiv: 3 deiner Karten sind in diesem Zug gesperrt${gameState.self.handBlock.byName ? ` (${gameState.self.handBlock.byName})` : ''}.` : pendingHandBlock ? '🖐️ Handblocker liegt auf dir: In deinem nächsten eigenen Zug werden 3 zufällige Karten gesperrt.' : myTurn ? prompt : 'Deine Karten bleiben privat. Die Hand überlappt automatisch, damit sie groß bleibt.';
+    const blockedIds = new Set(gameState.self.handBlock?.cardIds || []);
     els.handCards.innerHTML = gameState.self.hand.map((card, index) => {
-      const playable = myTurn && (gameState.newRowMode || gameState.legalRanks.includes(card.rank));
-      return `<button class="hand-card ${playable?'playable':'unplayable'}" style="--card-index:${index}" data-card-id="${card.id}" ${playable?'':'disabled'}><img src="${card.image}" alt="${escapeHtml(card.id)}" />${playable?'<span class="legal-pill">spielbar</span>':''}</button>`;
+      const handBlocked = blockedIds.has(card.id);
+      const playable = !handBlocked && myTurn && gameState.legalRanks.includes(card.rank);
+      return `<button class="hand-card ${handBlocked?'hand-blocked':playable?'playable':'unplayable'}" style="--card-index:${index}" data-card-id="${card.id}" ${playable?'':'disabled'}><img src="${card.image}" alt="${escapeHtml(card.id)}" />${handBlocked?'<span class="blocked-pill">BLOCK</span>':playable?'<span class="legal-pill">spielbar</span>':''}</button>`;
     }).join('');
   }
   function legalRankText(){ return (gameState.legalRanks || []).map(r=>RANK_LABELS[r]).join(' oder ') || 'keine'; }
@@ -339,12 +349,15 @@
     if (!show) return;
     els.abilityName.textContent = ability.name;
     els.abilityDescription.textContent = ability.description;
-    els.abilityStatus.textContent = ability.reason || (ability.canUse ? 'Bereit.' : 'Aktuell nicht verfügbar.');
+    const maskSummary = ability.id === 'maskenwechsel' && ability.info?.masks
+      ? ability.info.masks.map(m => `${m.potLabel} → ${cardLabel(m.card)}`).join(' · ')
+      : '';
+    els.abilityStatus.textContent = maskSummary ? `🎭 ${maskSummary}` : (ability.reason || (ability.canUse ? 'Bereit.' : 'Aktuell nicht verfügbar.'));
     if (ability.kind === 'passive') els.abilityUses.textContent = 'Passiv';
     else if (ability.kind === 'reactive') els.abilityUses.textContent = `${ability.uses}/${ability.maxUses}`;
     else els.abilityUses.textContent = `${ability.uses}/${ability.maxUses}`;
     const nonButton = ['passive','reactive'].includes(ability.kind);
-    const reviewable = !!ability.info && ['spaeher','zocker','tauschen','schmuggler'].includes(ability.id);
+    const reviewable = !!ability.info && ['spaeher','zocker','tauschen','schmuggler','maskenwechsel','handblocker'].includes(ability.id);
     els.abilityBtn.disabled = ((!ability.canUse && !reviewable) || nonButton || busy);
     els.abilityBtn.textContent = ability.kind === 'passive' ? 'Automatisch' : ability.kind === 'reactive' ? 'Automatisch gefragt' : ability.armed ? 'Aktiviert' : (!ability.canUse && reviewable ? 'Infos ansehen' : 'Fähigkeit nutzen');
   }
@@ -414,6 +427,19 @@
       const opts = a.options.forgeries || [];
       return `<p>Spiele eine Karte einmalig als direkten Nachbarrang. Die Fälschung löst keinen Spezial-Pot aus.</p><div class="forgery-list">${opts.map(o=>{const c=selfCard(o.cardId);return `<button class="forgery-option" data-forge-card="${o.cardId}" data-forge-direction="${o.direction}"><img src="${c?.image}" alt=""><span>${escapeHtml(cardLabel(c))} → <strong>${RANK_LABELS[o.asRank]}</strong></span></button>`}).join('')}</div>${info}`;
     }
+    if (a.baseId === 'kopierer' && !a.copied) {
+      const targets = a.options.targets || [];
+      return `<p>Wähle einen anderen Spieler. Dessen Fähigkeit wird für den Rest dieser Runde zu deiner Fähigkeit.</p><div class="choice-grid target-choices">${targets.map(t=>`<button class="choice-btn" data-copy-target="${t.playerId}"><strong>${escapeHtml(t.name)}</strong><small>${escapeHtml(t.abilityName)}</small></button>`).join('')}</div>${info}`;
+    }
+    if (a.id === 'handblocker') {
+      const targets = a.options.targets || [];
+      return `<p>Wähle einen anderen Spieler. 3 zufällige Karten aus dessen Hand werden in seinem nächsten eigenen Zug gesperrt.</p><div class="choice-grid target-choices">${targets.map(t=>`<button class="choice-btn" data-handblock-target="${t.playerId}"><strong>${escapeHtml(t.name)}</strong><small>${t.handCount} Karten</small></button>`).join('')}</div>${info}`;
+    }
+    if (a.id === 'maskenwechsel') return `<p>Zwei zufällige Spezial-Pots bekommen für diese Runde geheime Ersatzkarten. Die normalen Auslöser dieser beiden Pots funktionieren dann nicht.</p><button class="btn primary full" data-simple-ability="maskenwechsel">Masken wechseln</button>${info}`;
+    if (a.id === 'susanoo') {
+      const cards=(a.options.cardIds||[]).map(selfCard).filter(Boolean);
+      return `<p>Zerstöre die aktuelle Reihe und eröffne sofort mit einer beliebigen eigenen Karte neu. Kosten: <strong>Wert 5</strong> – je 1 Bronze in jeden Pot.</p><div class="ability-card-grid">${cards.map(c=>cardChoiceHtml(c,`data-susanoo-card="${c.id}"`)).join('')}</div>${info}`;
+    }
     return info || '<p class="subtle">Diese Fähigkeit läuft automatisch.</p>';
   }
   function abilityInfoHtml(a) {
@@ -429,6 +455,8 @@
     }
     if (a.id === 'tauschen' && a.info.drew) return `<div class="ability-result"><h4>Neu gezogen</h4><div class="scout-cards">${a.info.drew.map(c=>`<img src="${c.image}" alt="${escapeHtml(c.id)}" title="${escapeHtml(cardLabel(c))}">`).join('')}</div></div>`;
     if (a.id === 'schmuggler' && a.info.drew) return `<div class="ability-result"><h4>Geschmuggelt</h4><img class="result-card" src="${a.info.drew.image}" alt="${escapeHtml(a.info.drew.id)}"><strong>${escapeHtml(cardLabel(a.info.drew))}</strong></div>`;
+    if (a.id === 'maskenwechsel' && a.info.masks) return `<div class="ability-result"><h4>🎭 Nur du kennst die neuen Auslöser</h4>${a.info.masks.map(m=>`<div class="mask-row"><strong>${escapeHtml(m.potLabel)}</strong><span>→ ${escapeHtml(cardLabel(m.card))}</span><img src="${m.card.image}" alt="${escapeHtml(m.card.id)}"></div>`).join('')}</div>`;
+    if (a.id === 'handblocker' && a.info.targetName) return `<div class="ability-result"><h4>🖐️ Handblocker gesetzt</h4><p>Bei ${escapeHtml(a.info.targetName)} werden zu Beginn des nächsten eigenen Zuges ${a.info.count} dann noch vorhandene Karten zufällig ausgewählt und für genau diesen Zug blockiert.</p></div>`;
     return '';
   }
   async function useAbility(payload = {}, showResult = false) {
@@ -520,13 +548,16 @@
         return;
       }
       const confirmSwap=e.target.closest('[data-ability-confirm="tauschen"]'); if(confirmSwap){ useAbility({cardIds:[...selectedAbilityCards]},true); return; }
+      const copyTarget=e.target.closest('[data-copy-target]'); if(copyTarget){ useAbility({targetPlayerId:copyTarget.dataset.copyTarget}); return; }
+      const handblockTarget=e.target.closest('[data-handblock-target]'); if(handblockTarget){ useAbility({targetPlayerId:handblockTarget.dataset.handblockTarget},true); return; }
       const rank=e.target.closest('[data-rank]'); if(rank){ useAbility({rank:Number(rank.dataset.rank)}); return; }
       const spring=e.target.closest('[data-springer-card]'); if(spring){ useAbility({cardId:spring.dataset.springerCard}); return; }
-      const simple=e.target.closest('[data-simple-ability]'); if(simple){ useAbility({}); return; }
+      const simple=e.target.closest('[data-simple-ability]'); if(simple){ useAbility({}, simple.dataset.simpleAbility==='maskenwechsel'); return; }
       const smug=e.target.closest('[data-schmuggler-card]'); if(smug){ useAbility({cardId:smug.dataset.schmugglerCard},true); return; }
       const pot=e.target.closest('[data-pot-choice]'); if(pot){ useAbility({potId:pot.dataset.potChoice}); return; }
       const suit=e.target.closest('[data-suit]'); if(suit){ useAbility({suit:suit.dataset.suit},true); return; }
       const forge=e.target.closest('[data-forge-card]'); if(forge){ useAbility({cardId:forge.dataset.forgeCard,direction:Number(forge.dataset.forgeDirection)}); return; }
+      const susanoo=e.target.closest('[data-susanoo-card]'); if(susanoo){ useAbility({cardId:susanoo.dataset.susanooCard}); return; }
     });
     els.reactionCards.addEventListener('click', e => { const c=e.target.closest('[data-reaction-card]'); if(c){ if(els.reactionDialog.open)els.reactionDialog.close(); action('reactionPlay',{cardId:c.dataset.reactionCard}); } });
     els.reactionPassBtn.addEventListener('click', ()=>{ if(els.reactionDialog.open)els.reactionDialog.close(); action('reactionPass'); });
