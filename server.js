@@ -505,9 +505,18 @@ function setRegularTurn(room, idx) {
   room.turnPlayCounts[nextPlayer.id] = 0;
   const nextBlock = room.handBlocks?.[nextPlayer.id];
   if (nextBlock?.pending) {
+    // Die Karten werden ERST beim Beginn des betroffenen Zuges ausgelost.
+    // So können die ursprünglich ausgewählten IDs nicht vorher ausgespielt werden
+    // und der Handblocker blockiert zuverlässig bis zu 3 tatsächlich vorhandene Karten.
+    const currentHand = room.hands[nextPlayer.id] || [];
+    nextBlock.cardIds = shuffle(currentHand).slice(0, Math.min(nextBlock.count || 3, currentHand.length)).map(c => c.id);
     nextBlock.pending = false;
-    nextBlock.active = true;
-    addLog(room, `🖐️ Bei ${nextPlayer.name} sind in diesem Zug 3 zufällige Handkarten blockiert.`, 'bad');
+    nextBlock.active = nextBlock.cardIds.length > 0;
+    if (nextBlock.active) {
+      addLog(room, `🖐️ Bei ${nextPlayer.name} sind in diesem Zug ${nextBlock.cardIds.length} zufällige Handkarten blockiert.`, 'bad');
+    } else {
+      delete room.handBlocks[nextPlayer.id];
+    }
   }
   clearBlockIfOwnerTurn(room, idx);
 }
@@ -1425,11 +1434,13 @@ function handleAbility(room, player, body) {
     if (room.handBlocks?.[target.id]) throw new Error('Dieser Spieler hat bereits eine Handblockade.');
     const targetHand = room.hands[target.id] || [];
     if (!targetHand.length) throw new Error('Dieser Spieler hat keine Karten mehr.');
-    const cardIds = shuffle(targetHand).slice(0, Math.min(3, targetHand.length)).map(c => c.id);
-    room.handBlocks[target.id] = { byPlayerId: player.id, byName: player.name, cardIds, pending: true, active: false };
+    const blockCount = Math.min(3, targetHand.length);
+    // Noch keine konkreten Karten festlegen: Die Auslosung erfolgt erst genau dann,
+    // wenn der nächste eigene Zug des Ziels beginnt.
+    room.handBlocks[target.id] = { byPlayerId: player.id, byName: player.name, cardIds: [], count: blockCount, pending: true, active: false };
     state.uses = 1;
-    state.info = { targetPlayerId: target.id, targetName: target.name, count: cardIds.length };
-    addLog(room, `🖐️ ${player.name} belegt ${target.name} mit Handblocker. ${cardIds.length} zufällige Karten sind in ${target.name}s nächstem eigenen Zug gesperrt.`, 'special');
+    state.info = { targetPlayerId: target.id, targetName: target.name, count: blockCount };
+    addLog(room, `🖐️ ${player.name} belegt ${target.name} mit Handblocker. In ${target.name}s nächstem eigenen Zug werden bis zu ${blockCount} dann vorhandene Karten zufällig gesperrt.`, 'special');
     return;
   }
 
@@ -1440,11 +1451,20 @@ function handleAbility(room, player, body) {
     const chosenPots = shuffle(availablePots).slice(0, 2);
     const forbidden = new Set(Object.values(POT_DEFS).map(def => `${def.suit}-${def.rank}`));
     for (const trigger of Object.values(room.maskedPotTriggers || {})) forbidden.add(`${trigger.suit}-${trigger.rank}`);
-    const candidates = shuffle(buildDeck().filter(card => !forbidden.has(`${card.suit}-${card.rank}`)));
-    if (candidates.length < 2) throw new Error('Keine gültigen Ersatzkarten verfügbar.');
+
+    // Nur Karten verwenden, die in dieser Runde NOCH ausgespielt werden können.
+    // Zuvor wurde aus dem kompletten 52er-Deck gezogen; dadurch konnte eine bereits
+    // gespielte Karte als Ersatz ausgelost werden und Maskenwechsel wirkte faktisch nie.
+    const stillUnplayed = [
+      ...(room.leftovers || []),
+      ...activePlayers(room).flatMap(p => room.hands[p.id] || [])
+    ];
+    const candidates = shuffle(stillUnplayed.filter(card => !forbidden.has(`${card.suit}-${card.rank}`)));
+    if (candidates.length < 2) throw new Error('Es sind nicht genug noch spielbare Ersatzkarten verfügbar.');
     const masks = chosenPots.map((potId, i) => {
       const card = candidates[i];
       room.maskedPotTriggers[potId] = { suit: card.suit, rank: card.rank, ownerId: player.id };
+      forbidden.add(`${card.suit}-${card.rank}`);
       return { potId, potLabel: POT_DEFS[potId].label, card };
     });
     state.uses = 1;
@@ -1710,5 +1730,5 @@ setInterval(() => {
 }, 30 * 60 * 1000).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Gelber Zwerg V4.4 läuft auf http://localhost:${PORT}`);
+  console.log(`Gelber Zwerg V4.5 läuft auf http://localhost:${PORT}`);
 });

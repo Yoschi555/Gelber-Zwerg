@@ -1,4 +1,4 @@
-# Gelber Zwerg – Internet V4.4.0
+# Gelber Zwerg – Internet V4.5.0
 
 Online-Multiplayer für 3–6 Spieler mit eigener öffentlicher URL.
 
@@ -76,6 +76,12 @@ Die Räume werden aktuell nur im Arbeitsspeicher gehalten. Ein Neustart oder Red
 - **Susanoo:** zerstört einmal pro Runde im eigenen Zug die aktuelle Reihe und eröffnet sofort mit einer eigenen Karte neu; Kosten Wert 5 als je 1 Bronze in jeden Pot.
 - **Dieb:** löst jetzt bei jedem selbst abgeräumten Spezial-Pot aus und raubt jeweils 3 Bronze vom aktuell reichsten anderen Spieler.
 - **Glücksritter:** der Bonus für den gewählten Pot beträgt jetzt 2 Silber (Wert 4) aus der Bank.
+
+
+## V4.5 – Maskenwechsel & Handblocker Fix
+
+- **Maskenwechsel:** Ersatzkarten werden nur noch aus Karten gewählt, die in der laufenden Runde noch nicht ausgespielt wurden. Der Fähigkeitsnutzer sieht seine beiden geheimen Ersatzauslöser dauerhaft im Fähigkeitsfeld und direkt in seiner Pot-Legende.
+- **Handblocker:** Die drei blockierten Karten werden erst beim tatsächlichen Beginn des nächsten eigenen Zuges des Ziels zufällig bestimmt. Dadurch können die ausgewählten Karten nicht vorher verschwinden und der Effekt greift zuverlässig für genau diesen Zug.
 
 
 ## V4.4
